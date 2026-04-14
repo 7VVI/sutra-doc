@@ -1,0 +1,45 @@
+{
+  "index_patterns": ["kb_visit_log*"],
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "2",
+        "number_of_replicas": "0",
+        "refresh_interval": "60s",
+        "max_result_window": "10000",
+        "analysis": {
+          "analyzer": {
+            "ik_smart": {
+              "type": "ik_smart"
+            }
+          }
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "docId": { "type": "long" },
+        "folderId": { "type": "long" },
+        "visitType": { "type": "integer" },
+        "keywords": {
+          "type": "text",
+          "analyzer": "ik_smart"
+        },
+        "keywordsMax": { "type": "keyword" },
+        "userId": { "type": "keyword" },
+        "tenantId": { "type": "keyword" },
+        "sourceIp": { "type": "ip" },
+        "deviceType": { "type": "keyword" },
+        "browser": { "type": "keyword" },
+        "durationSeconds": { "type": "integer" },
+        "createTime": {
+          "type": "date",
+          "format": "yyyy-MM-dd HH:mm:ss"
+        }
+      }
+    },
+    "aliases": {
+      "kb_visit_log_alias": {}
+    }
+  }
+}

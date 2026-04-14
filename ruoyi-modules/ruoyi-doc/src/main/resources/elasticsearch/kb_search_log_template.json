@@ -1,0 +1,52 @@
+{
+  "index_patterns": ["kb_search_log*"],
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "2",
+        "number_of_replicas": "0",
+        "refresh_interval": "60s",
+        "max_result_window": "10000",
+        "analysis": {
+          "analyzer": {
+            "ik_smart": {
+              "type": "ik_smart"
+            }
+          }
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "keywords": {
+          "type": "text",
+          "analyzer": "ik_smart"
+        },
+        "keywordsMax": { "type": "keyword" },
+        "searchTitle": {
+          "type": "text",
+          "analyzer": "ik_smart"
+        },
+        "searchContent": {
+          "type": "text",
+          "analyzer": "ik_smart"
+        },
+        "topicCodes": { "type": "keyword" },
+        "folderIds": { "type": "keyword" },
+        "userId": { "type": "keyword" },
+        "tenantId": { "type": "keyword" },
+        "sourceIp": { "type": "ip" },
+        "resultCount": { "type": "integer" },
+        "searchDurationMs": { "type": "integer" },
+        "searchType": { "type": "integer" },
+        "createTime": {
+          "type": "date",
+          "format": "yyyy-MM-dd HH:mm:ss"
+        }
+      }
+    },
+    "aliases": {
+      "kb_search_log_alias": {}
+    }
+  }
+}

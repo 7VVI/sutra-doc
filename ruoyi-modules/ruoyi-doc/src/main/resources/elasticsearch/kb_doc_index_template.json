@@ -1,0 +1,69 @@
+{
+  "index_patterns": ["kb_doc*"],
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": "3",
+        "number_of_replicas": "1",
+        "refresh_interval": "10s",
+        "max_result_window": "1000",
+        "analysis": {
+          "analyzer": {
+            "ik_max_word": {
+              "type": "ik_max_word"
+            },
+            "ik_smart": {
+              "type": "ik_smart"
+            }
+          }
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "docId": { "type": "long" },
+        "docName": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_smart",
+          "term_vector": "with_positions_offsets"
+        },
+        "docTitle": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_smart",
+          "term_vector": "with_positions_offsets"
+        },
+        "content": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_smart",
+          "term_vector": "with_positions_offsets"
+        },
+        "keywords": {
+          "type": "text",
+          "analyzer": "ik_max_word"
+        },
+        "folderId": { "type": "long" },
+        "folderPath": { "type": "keyword" },
+        "topicCodes": { "type": "keyword" },
+        "businessTypes": { "type": "keyword" },
+        "fileType": { "type": "keyword" },
+        "orgCode": { "type": "keyword" },
+        "tenantId": { "type": "keyword" },
+        "status": { "type": "integer" },
+        "releaseFlag": { "type": "integer" },
+        "viewCount": { "type": "long" },
+        "downloadCount": { "type": "long" },
+        "createTime": {
+          "type": "date",
+          "format": "yyyy-MM-dd HH:mm:ss"
+        },
+        "createBy": { "type": "keyword" }
+      }
+    },
+    "aliases": {
+      "kb_doc_alias": {}
+    }
+  }
+}
