@@ -4,10 +4,10 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import com.hmoob.common.tenant.core.TenantEntity;
 
 import java.io.Serial;
-import java.io.Serializable;
-import java.util.Date;
 
 /**
  * KB文档访问记录实体类
@@ -15,8 +15,9 @@ import java.util.Date;
  * @author hmoob
  */
 @Data
+@EqualsAndHashCode(callSuper = true)
 @TableName("kb_doc_visit_record")
-public class KbDocVisitRecord implements Serializable {
+public class KbDocVisitRecord extends TenantEntity {
 
     @Serial
     private static final long serialVersionUID = 1L;
@@ -81,16 +82,6 @@ public class KbDocVisitRecord implements Serializable {
      * 停留时长,单位:秒
      */
     private Integer durationSeconds;
-
-    /**
-     * 创建时间
-     */
-    private Date createTime;
-
-    /**
-     * 更新时间
-     */
-    private Date updateTime;
 
     /**
      * 删除标志: 0-正常, 1-已删除

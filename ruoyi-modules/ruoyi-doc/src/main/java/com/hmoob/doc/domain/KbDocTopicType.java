@@ -4,10 +4,10 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import com.hmoob.common.tenant.core.TenantEntity;
 
 import java.io.Serial;
-import java.io.Serializable;
-import java.util.Date;
 
 /**
  * KB文档主题关联实体类
@@ -15,8 +15,9 @@ import java.util.Date;
  * @author hmoob
  */
 @Data
+@EqualsAndHashCode(callSuper = true)
 @TableName("kb_doc_topic_type")
-public class KbDocTopicType implements Serializable {
+public class KbDocTopicType extends TenantEntity {
 
     @Serial
     private static final long serialVersionUID = 1L;
@@ -41,21 +42,6 @@ public class KbDocTopicType implements Serializable {
      * 排序号
      */
     private Integer sortOrder;
-
-    /**
-     * 创建人ID
-     */
-    private Long createBy;
-
-    /**
-     * 创建时间
-     */
-    private Date createTime;
-
-    /**
-     * 更新时间
-     */
-    private Date updateTime;
 
     /**
      * 删除标志: 0-正常, 1-已删除

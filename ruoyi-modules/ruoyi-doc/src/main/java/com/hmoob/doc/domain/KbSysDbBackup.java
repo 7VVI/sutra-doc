@@ -4,10 +4,10 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import com.hmoob.common.tenant.core.TenantEntity;
 
 import java.io.Serial;
-import java.io.Serializable;
-import java.util.Date;
 
 /**
  * KB系统数据库备份实体类
@@ -15,8 +15,9 @@ import java.util.Date;
  * @author hmoob
  */
 @Data
+@EqualsAndHashCode(callSuper = true)
 @TableName("kb_sys_db_backup")
-public class KbSysDbBackup implements Serializable {
+public class KbSysDbBackup extends TenantEntity {
 
     @Serial
     private static final long serialVersionUID = 1L;
@@ -71,21 +72,6 @@ public class KbSysDbBackup implements Serializable {
      * 备注
      */
     private String remark;
-
-    /**
-     * 创建人ID
-     */
-    private Long createBy;
-
-    /**
-     * 创建时间
-     */
-    private Date createTime;
-
-    /**
-     * 更新时间
-     */
-    private Date updateTime;
 
     /**
      * 删除标志: 0-正常, 1-已删除

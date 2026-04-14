@@ -4,10 +4,10 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import com.hmoob.common.tenant.core.TenantEntity;
 
 import java.io.Serial;
-import java.io.Serializable;
-import java.util.Date;
 
 /**
  * KB文档收藏实体类
@@ -15,8 +15,9 @@ import java.util.Date;
  * @author hmoob
  */
 @Data
+@EqualsAndHashCode(callSuper = true)
 @TableName("kb_doc_favourite")
-public class KbDocFavourite implements Serializable {
+public class KbDocFavourite extends TenantEntity {
 
     @Serial
     private static final long serialVersionUID = 1L;
@@ -46,16 +47,6 @@ public class KbDocFavourite implements Serializable {
      * 收藏备注
      */
     private String remark;
-
-    /**
-     * 创建时间
-     */
-    private Date createTime;
-
-    /**
-     * 更新时间
-     */
-    private Date updateTime;
 
     /**
      * 删除标志: 0-正常, 1-已删除
