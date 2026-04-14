@@ -50,4 +50,15 @@ public interface KbTopicMapper extends BaseMapperPlus<KbTopic, KbTopicVo> {
             .orderByAsc(KbTopic::getSortOrder));
     }
 
+    /**
+     * 根据主题ID查询主题编码
+     *
+     * @param topicId 主题ID
+     * @return 主题编码
+     */
+    default String selectTopicCodeById(Long topicId) {
+        KbTopic topic = this.selectById(topicId);
+        return topic != null ? topic.getTopicCode() : null;
+    }
+
 }
