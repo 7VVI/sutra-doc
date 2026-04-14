@@ -15,6 +15,9 @@ import java.util.List;
  *
  * @author hmoob
  */
+@DataPermission({
+    @DataColumn(key = "deptName", value = "create_by")
+})
 public interface KbFolderMapper extends BaseMapperPlus<KbFolder, KbFolderVo> {
 
     /**
@@ -22,9 +25,6 @@ public interface KbFolderMapper extends BaseMapperPlus<KbFolder, KbFolderVo> {
      *
      * @return 目录树列表
      */
-    @DataPermission({
-        @DataColumn(key = "deptName", value = "create_by")
-    })
     default List<KbFolderVo> selectFolderTree() {
         return this.selectVoList(new LambdaQueryWrapper<KbFolder>()
             .eq(KbFolder::getStatus, 1)

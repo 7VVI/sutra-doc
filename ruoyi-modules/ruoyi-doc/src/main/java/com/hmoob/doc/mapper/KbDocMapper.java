@@ -16,6 +16,10 @@ import java.util.List;
  *
  * @author hmoob
  */
+@DataPermission({
+    @DataColumn(key = "deptName", value = "dep_id"),
+    @DataColumn(key = "userName", value = "create_by")
+})
 public interface KbDocMapper extends BaseMapperPlus<KbDoc, KbDocVo> {
 
     /**
@@ -24,10 +28,6 @@ public interface KbDocMapper extends BaseMapperPlus<KbDoc, KbDocVo> {
      * @param queryWrapper 查询条件
      * @return 文档列表
      */
-    @DataPermission({
-        @DataColumn(key = "deptName", value = "dep_id"),
-        @DataColumn(key = "userName", value = "create_by")
-    })
     default List<KbDocVo> selectDocList(Wrapper<KbDoc> queryWrapper) {
         return this.selectVoList(queryWrapper);
     }
@@ -39,10 +39,6 @@ public interface KbDocMapper extends BaseMapperPlus<KbDoc, KbDocVo> {
      * @param queryWrapper 查询条件
      * @return 文档分页列表
      */
-    @DataPermission({
-        @DataColumn(key = "deptName", value = "dep_id"),
-        @DataColumn(key = "userName", value = "create_by")
-    })
     default Page<KbDocVo> selectPageDocList(Page<KbDoc> page, Wrapper<KbDoc> queryWrapper) {
         return this.selectVoPage(page, queryWrapper);
     }
