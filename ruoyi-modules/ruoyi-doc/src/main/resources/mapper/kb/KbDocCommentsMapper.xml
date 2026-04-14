@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hmoob.doc.mapper.KbDocCommentsMapper">
+
+    <!-- Select comments with user info -->
+    <select id="selectCommentsWithUserInfo" resultType="com.hmoob.doc.domain.vo.KbDocCommentsVo">
+        SELECT c.comment_id, c.doc_id, c.parent_id, c.reply_to_user_id, c.comment_content,
+               c.like_count, c.is_anonymous, c.status, c.create_time,
+               CASE WHEN c.is_anonymous = 1 THEN '匿名用户' ELSE u.nick_name END as userName,
+               CASE WHEN c.is_anonymous = 1 THEN '' ELSE u.avatar END as avatar
+        FROM kb_doc_comments c
+        LEFT JOIN sys_user u ON c.create_by = u.user_id AND u.del_flag = '0'
+        WHERE c.del_flag = '0'
+          AND c.doc_id = #{docId}
+          AND c.parent_id = 0
+          AND c.status = 1
+        ORDER BY c.create_time DESC
+    </select>
+
+    <!-- Select replies with user info -->
+    <select id="selectRepliesWithUserInfo" resultType="com.hmoob.doc.domain.vo.KbDocCommentsVo">
+        SELECT c.comment_id, c.doc_id, c.parent_id, c.reply_to_user_id, c.comment_content,
+               c.like_count, c.is_anonymous, c.status, c.create_time,
+               CASE WHEN c.is_anonymous = 1 THEN '匿名用户' ELSE u.nick_name END as userName,
+               CASE WHEN c.is_anonymous = 1 THEN '' ELSE u.avatar END as avatar,
+               CASE WHEN c.is_anonymous = 1 THEN '匿名用户' ELSE ru.nick_name END as replyToUserName
+        FROM kb_doc_comments c
+        LEFT JOIN sys_user u ON c.create_by = u.user_id AND u.del_flag = '0'
+        LEFT JOIN sys_user ru ON c.reply_to_user_id = ru.user_id AND ru.del_flag = '0'
+        WHERE c.del_flag = '0'
+          AND c.parent_id = #{parentId}
+          AND c.status = 1
+        ORDER BY c.create_time ASC
+    </select>
+
+    <!-- Get comment count by doc -->
+    <select id="selectCommentCountByDocId" resultType="java.lang.Long">
+        SELECT COUNT(*)
+        FROM kb_doc_comments
+        WHERE del_flag = '0'
+          AND doc_id = #{docId}
+          AND status = 1
+    </select>
+
+</mapper>

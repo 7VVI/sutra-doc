@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hmoob.doc.mapper.KbDocMapper">
+
+    <!-- Select document with folder name -->
+    <select id="selectDocWithFolderName" resultType="com.hmoob.doc.domain.vo.KbDocVo">
+        SELECT d.doc_id, d.folder_id, d.file_id, d.preview_file_id, d.original_preview_file_id,
+               d.index_id, d.org_code, d.dep_id, d.doc_name, d.doc_title, d.serial_number,
+               d.file_type, d.file_size, d.category, d.keywords, d.status, d.fti_flag,
+               d.convert_flag, d.release_flag, d.public_remark, d.current_version,
+               d.download_count, d.comment_count, d.view_count, d.favourite_count,
+               d.process_msg, d.remark, d.create_time,
+               f.folder_name
+        FROM kb_doc d
+        LEFT JOIN kb_folder f ON d.folder_id = f.folder_id AND f.del_flag = '0'
+        WHERE d.del_flag = '0'
+          AND d.doc_id = #{docId}
+    </select>
+
+    <!-- Select document list with folder name -->
+    <select id="selectDocListWithFolderName" resultType="com.hmoob.doc.domain.vo.KbDocVo">
+        SELECT d.doc_id, d.folder_id, d.file_id, d.preview_file_id, d.original_preview_file_id,
+               d.index_id, d.org_code, d.dep_id, d.doc_name, d.doc_title, d.serial_number,
+               d.file_type, d.file_size, d.category, d.keywords, d.status, d.fti_flag,
+               d.convert_flag, d.release_flag, d.public_remark, d.current_version,
+               d.download_count, d.comment_count, d.view_count, d.favourite_count,
+               d.process_msg, d.remark, d.create_time,
+               f.folder_name
+        FROM kb_doc d
+        LEFT JOIN kb_folder f ON d.folder_id = f.folder_id AND f.del_flag = '0'
+        WHERE d.del_flag = '0'
+          AND d.folder_id = #{folderId}
+        ORDER BY d.create_time DESC
+    </select>
+
+    <!-- Get document statistics by folder -->
+    <select id="selectDocStatsByFolder" resultType="com.hmoob.doc.domain.vo.DocStatVo">
+        SELECT d.folder_id, COUNT(*) as docCount, SUM(d.file_size) as totalSize,
+               SUM(d.download_count) as totalDownloads, SUM(d.view_count) as totalViews
+        FROM kb_doc d
+        WHERE d.del_flag = '0'
+          AND d.folder_id IN (
+            SELECT folder_id FROM kb_folder WHERE del_flag = '0'
+            AND (folder_id = #{folderId} OR folder_path LIKE CONCAT(#{folderPath}, '%'))
+          )
+        GROUP BY d.folder_id
+    </select>
+
+</mapper>

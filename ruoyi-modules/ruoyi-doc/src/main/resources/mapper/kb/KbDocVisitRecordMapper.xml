@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hmoob.doc.mapper.KbDocVisitRecordMapper">
+
+    <!-- Get visit statistics by doc -->
+    <select id="selectVisitStatsByDocId" resultType="com.hmoob.doc.domain.vo.VisitStatVo">
+        SELECT visit_type, COUNT(*) as visitCount
+        FROM kb_doc_visit_record
+        WHERE del_flag = '0'
+          AND doc_id = #{docId}
+          AND create_time >= DATE_SUB(NOW(), INTERVAL #{days} DAY)
+        GROUP BY visit_type
+    </select>
+
+    <!-- Get visit statistics by user -->
+    <select id="selectVisitStatsByUserId" resultType="com.hmoob.doc.domain.vo.VisitStatVo">
+        SELECT visit_type, COUNT(*) as visitCount
+        FROM kb_doc_visit_record
+        WHERE del_flag = '0'
+          AND user_id = #{userId}
+          AND create_time >= DATE_SUB(NOW(), INTERVAL #{days} DAY)
+        GROUP BY visit_type
+    </select>
+
+    <!-- Get recent visit records with doc info -->
+    <select id="selectRecentVisitsWithDocInfo" resultType="com.hmoob.doc.domain.vo.KbDocVisitRecordVo">
+        SELECT v.visit_id, v.doc_id, v.folder_id, v.visit_type, v.keywords, v.keywords_max,
+               v.source_ip, v.user_id, v.device_type, v.browser, v.referer,
+               v.duration_seconds, v.create_time,
+               d.doc_name, d.doc_title
+        FROM kb_doc_visit_record v
+        LEFT JOIN kb_doc d ON v.doc_id = d.doc_id AND d.del_flag = '0'
+        WHERE v.del_flag = '0'
+          AND v.user_id = #{userId}
+        ORDER BY v.create_time DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- Get daily visit statistics -->
+    <select id="selectDailyVisitStats" resultType="com.hmoob.doc.domain.vo.DailyStatVo">
+        SELECT DATE(create_time) as statDate, COUNT(*) as visitCount
+        FROM kb_doc_visit_record
+        WHERE del_flag = '0'
+          AND tenant_id = #{tenantId}
+          AND create_time >= DATE_SUB(NOW(), INTERVAL #{days} DAY)
+        GROUP BY DATE(create_time)
+        ORDER BY statDate DESC
+    </select>
+
+</mapper>

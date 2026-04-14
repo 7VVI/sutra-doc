@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hmoob.doc.mapper.KbSearchRecordMapper">
+
+    <!-- Get hot keywords in recent days -->
+    <select id="selectHotKeywords" resultType="java.lang.String">
+        SELECT keywords
+        FROM kb_search_record
+        WHERE del_flag = '0'
+          AND tenant_id = #{tenantId}
+          AND create_time >= DATE_SUB(NOW(), INTERVAL #{days} DAY)
+          AND keywords IS NOT NULL
+          AND keywords != ''
+        GROUP BY keywords
+        ORDER BY COUNT(*) DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- Get keyword statistics -->
+    <select id="selectKeywordStats" resultType="com.hmoob.doc.domain.vo.KeywordStatVo">
+        SELECT keywords, COUNT(*) as searchCount, AVG(result_count) as avgResultCount
+        FROM kb_search_record
+        WHERE del_flag = '0'
+          AND tenant_id = #{tenantId}
+          AND create_time >= DATE_SUB(NOW(), INTERVAL #{days} DAY)
+          AND keywords IS NOT NULL
+          AND keywords != ''
+        GROUP BY keywords
+        ORDER BY searchCount DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- Get search statistics by date -->
+    <select id="selectSearchStatsByDate" resultType="com.hmoob.doc.domain.vo.SearchStatVo">
+        SELECT DATE(create_time) as searchDate, COUNT(*) as searchCount
+        FROM kb_search_record
+        WHERE del_flag = '0'
+          AND tenant_id = #{tenantId}
+          AND create_time >= DATE_SUB(NOW(), INTERVAL #{days} DAY)
+        GROUP BY DATE(create_time)
+        ORDER BY searchDate DESC
+    </select>
+
+</mapper>

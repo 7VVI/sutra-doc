@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hmoob.doc.mapper.KbFolderPermissionMapper">
+
+    <!-- Get inherited permissions by recursively checking parent folders -->
+    <select id="selectInheritedPermissions" resultType="com.hmoob.doc.domain.vo.KbFolderPermissionVo">
+        WITH RECURSIVE folder_path AS (
+            SELECT folder_id, parent_id, folder_level
+            FROM kb_folder
+            WHERE folder_id = #{folderId}
+              AND del_flag = '0'
+            UNION ALL
+            SELECT f.folder_id, f.parent_id, f.folder_level
+            FROM kb_folder f
+            INNER JOIN folder_path fp ON f.folder_id = fp.parent_id
+            WHERE f.del_flag = '0'
+        )
+        SELECT fp.permission_id, fp.folder_id, fp.subject_type, fp.subject_id,
+               fp.perm_view, fp.perm_download, fp.perm_edit, fp.perm_delete,
+               fp.perm_upload, fp.perm_manage, fp.data_scope, fp.custom_scope,
+               fp.inherit_flag
+        FROM kb_folder_permission fp
+        INNER JOIN folder_path f ON fp.folder_id = f.folder_id
+        WHERE fp.del_flag = '0'
+          AND fp.inherit_flag = 1
+          AND fp.subject_id = #{subjectId}
+          AND fp.subject_type = #{subjectType}
+        ORDER BY f.folder_level DESC
+        LIMIT 1
+    </select>
+
+    <!-- Get all permissions for a folder including inherited ones -->
+    <select id="selectAllPermissionsByFolderId" resultType="com.hmoob.doc.domain.vo.KbFolderPermissionVo">
+        SELECT fp.permission_id, fp.folder_id, fp.subject_type, fp.subject_id,
+               fp.perm_view, fp.perm_download, fp.perm_edit, fp.perm_delete,
+               fp.perm_upload, fp.perm_manage, fp.data_scope, fp.custom_scope,
+               fp.inherit_flag
+        FROM kb_folder_permission fp
+        WHERE fp.del_flag = '0'
+          AND fp.folder_id = #{folderId}
+    </select>
+
+    <!-- Check if user has specific permission on folder -->
+    <select id="selectPermissionByUserAndFolder" resultType="com.hmoob.doc.domain.vo.KbFolderPermissionVo">
+        WITH RECURSIVE folder_path AS (
+            SELECT folder_id, parent_id, folder_level
+            FROM kb_folder
+            WHERE folder_id = #{folderId}
+              AND del_flag = '0'
+            UNION ALL
+            SELECT f.folder_id, f.parent_id, f.folder_level
+            FROM kb_folder f
+            INNER JOIN folder_path fp ON f.folder_id = fp.parent_id
+            WHERE f.del_flag = '0'
+        )
+        SELECT fp.permission_id, fp.folder_id, fp.subject_type, fp.subject_id,
+               fp.perm_view, fp.perm_download, fp.perm_edit, fp.perm_delete,
+               fp.perm_upload, fp.perm_manage, fp.data_scope, fp.custom_scope,
+               fp.inherit_flag
+        FROM kb_folder_permission fp
+        INNER JOIN folder_path f ON fp.folder_id = f.folder_id
+        WHERE fp.del_flag = '0'
+          AND fp.inherit_flag = 1
+          AND fp.subject_type = 1
+          AND fp.subject_id = #{userId}
+        ORDER BY f.folder_level DESC
+        LIMIT 1
+    </select>
+
+</mapper>
