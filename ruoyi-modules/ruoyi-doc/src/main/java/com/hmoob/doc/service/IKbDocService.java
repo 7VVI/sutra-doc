@@ -145,4 +145,12 @@ public interface IKbDocService {
      */
     boolean isFileTypeSupported(String fileType);
 
+    /**
+     * 更新ES索引中的文档信息
+     * 当文档的ES相关字段变化时调用(如发布/撤回、标题/关键词变更等)
+     *
+     * @param docId 文档ID
+     */
+    void updateEsIndex(Long docId);
+
 }

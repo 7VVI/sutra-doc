@@ -330,6 +330,7 @@ public class KbDocServiceImpl implements IKbDocService {
      * 发布文档
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public int publishDoc(Long docId) {
         KbDoc doc = baseMapper.selectById(docId);
         if (ObjectUtil.isNull(doc)) {
@@ -341,16 +342,28 @@ public class KbDocServiceImpl implements IKbDocService {
         if (doc.getStatus().equals(DocStatusEnum.ARCHIVED.getCode())) {
             throw new ServiceException("文档已归档，不允许发布");
         }
-        return baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+
+        int result = baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
             .set(KbDoc::getStatus, DocStatusEnum.PUBLISHED.getCode())
             .set(KbDoc::getReleaseFlag, ReleaseFlagEnum.PUBLISHED.getCode())
             .eq(KbDoc::getDocId, docId));
+
+        // 更新ES索引中的发布状态
+        if (result > 0) {
+            try {
+                updateEsIndex(docId);
+            } catch (Exception e) {
+                log.warn("更新ES索引发布状态失败: docId={}", docId, e);
+            }
+        }
+        return result;
     }
 
     /**
      * 撤回文档
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public int withdrawDoc(Long docId) {
         KbDoc doc = baseMapper.selectById(docId);
         if (ObjectUtil.isNull(doc)) {
@@ -359,10 +372,21 @@ public class KbDocServiceImpl implements IKbDocService {
         if (!doc.getStatus().equals(DocStatusEnum.PUBLISHED.getCode())) {
             throw new ServiceException("只有已发布的文档才能撤回");
         }
-        return baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+
+        int result = baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
             .set(KbDoc::getStatus, DocStatusEnum.WITHDRAWN.getCode())
             .set(KbDoc::getReleaseFlag, ReleaseFlagEnum.UNPUBLISHED.getCode())
             .eq(KbDoc::getDocId, docId));
+
+        // 更新ES索引中的发布状态
+        if (result > 0) {
+            try {
+                updateEsIndex(docId);
+            } catch (Exception e) {
+                log.warn("更新ES索引撤回状态失败: docId={}", docId, e);
+            }
+        }
+        return result;
     }
 
     /**
@@ -437,13 +461,25 @@ public class KbDocServiceImpl implements IKbDocService {
      * 修改保存文档信息
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public int updateDoc(KbDocBo bo) {
         KbDoc doc = MapstructUtils.convert(bo, KbDoc.class);
         KbDoc oldDoc = baseMapper.selectById(doc.getDocId());
         if (ObjectUtil.isNull(oldDoc)) {
             throw new ServiceException("文档不存在，无法修改");
         }
-        return baseMapper.updateById(doc);
+
+        int result = baseMapper.updateById(doc);
+
+        // 检查是否需要更新ES索引(ES相关字段变化时)
+        if (result > 0 && needUpdateEsIndex(oldDoc, doc)) {
+            try {
+                updateEsIndex(doc.getDocId());
+            } catch (Exception e) {
+                log.warn("修改文档后更新ES索引失败: docId={}", doc.getDocId(), e);
+            }
+        }
+        return result;
     }
 
     /**
@@ -474,6 +510,65 @@ public class KbDocServiceImpl implements IKbDocService {
     @Override
     public boolean isFileTypeSupported(String fileType) {
         return FileUtil.isFileTypeSupported(fileType);
+    }
+
+    /**
+     * 更新ES索引中的文档信息
+     * 当文档的ES相关字段变化时调用(如发布/撤回、标题/关键词变更等)
+     */
+    @Override
+    public void updateEsIndex(Long docId) {
+        KbDoc doc = baseMapper.selectById(docId);
+        if (doc == null) {
+            log.warn("文档不存在，无法更新ES索引: docId={}", docId);
+            return;
+        }
+
+        // 检查是否已索引
+        if (doc.getFtiFlag() != FtiFlagEnum.YES.getCode()) {
+            log.info("文档尚未完成索引，跳过更新: docId={}, ftiFlag={}", docId, doc.getFtiFlag());
+            return;
+        }
+
+        // 构建ES文档更新对象(只更新必要字段)
+        KbDocDocument document = new KbDocDocument();
+        document.setDocId(docId);
+        document.setDocName(doc.getDocName());
+        document.setDocTitle(doc.getDocTitle());
+        document.setKeywords(doc.getKeywords());
+        document.setFolderId(doc.getFolderId());
+        document.setFileType(doc.getFileType());
+        document.setCategory(doc.getCategory());
+        document.setStatus(doc.getStatus());
+        document.setReleaseFlag(doc.getReleaseFlag());
+        document.setViewCount(doc.getViewCount());
+        document.setDownloadCount(doc.getDownloadCount());
+        document.setOrgCode(doc.getOrgCode());
+        document.setTenantId(LoginHelper.getTenantId());
+
+        try {
+            esIndexService.updateDocument(document);
+            log.info("更新ES索引成功: docId={}", docId);
+        } catch (Exception e) {
+            log.error("更新ES索引失败: docId={}", docId, e);
+        }
+    }
+
+    /**
+     * 判断是否需要更新ES索引
+     * 检查ES搜索相关的字段是否发生变化
+     */
+    private boolean needUpdateEsIndex(KbDoc oldDoc, KbDoc newDoc) {
+        // ES搜索相关字段列表
+        return !ObjectUtil.equal(oldDoc.getDocName(), newDoc.getDocName())
+            || !ObjectUtil.equal(oldDoc.getDocTitle(), newDoc.getDocTitle())
+            || !ObjectUtil.equal(oldDoc.getKeywords(), newDoc.getKeywords())
+            || !ObjectUtil.equal(oldDoc.getFolderId(), newDoc.getFolderId())
+            || !ObjectUtil.equal(oldDoc.getFileType(), newDoc.getFileType())
+            || !ObjectUtil.equal(oldDoc.getCategory(), newDoc.getCategory())
+            || !ObjectUtil.equal(oldDoc.getStatus(), newDoc.getStatus())
+            || !ObjectUtil.equal(oldDoc.getReleaseFlag(), newDoc.getReleaseFlag())
+            || !ObjectUtil.equal(oldDoc.getOrgCode(), newDoc.getOrgCode());
     }
 
     /**
