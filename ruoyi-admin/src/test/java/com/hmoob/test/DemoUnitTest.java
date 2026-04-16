@@ -1,10 +1,16 @@
 package com.hmoob.test;
 
+import com.alibaba.cloud.ai.parser.tika.TikaDocumentParser;
 import com.hmoob.common.web.config.properties.CaptchaProperties;
 import org.junit.jupiter.api.*;
+import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -65,6 +71,23 @@ public class DemoUnitTest {
     @AfterAll
     public static void testAfterAll() {
         System.out.println("@AfterAll ==================");
+    }
+
+
+    @Test
+    public void testParseDoc() throws IOException {
+        // 创建 Tika Parser
+        TikaDocumentParser parser = new TikaDocumentParser();
+
+        // 读取文件输入流
+
+        try (InputStream inputStream = new FileInputStream("C:\\Users\\yanx\\Downloads\\订货平台2.0数据初始化_代理商积分数据_20260410_V0.1.xlsx");) {
+            List<Document> parse = parser.parse(inputStream);
+            for (Document document : parse) {
+                System.out.println(document.getText());
+            }
+        }
+
     }
 
 }

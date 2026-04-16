@@ -3,7 +3,9 @@ package com.hmoob.doc.service;
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.doc.domain.bo.KbDocBo;
+import com.hmoob.doc.domain.dto.KbDocUploadDto;
 import com.hmoob.doc.domain.vo.KbDocVo;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -46,6 +48,30 @@ public interface IKbDocService {
      * @return 文档信息
      */
     KbDocVo selectDocBySerialNumber(String serialNumber);
+
+    /**
+     * 上传文档
+     * 包含文件上传、文档保存、异步解析和ES索引
+     *
+     * @param file 上传文件
+     * @param dto  上传参数
+     * @return 文档信息
+     */
+    KbDocVo uploadDoc(MultipartFile file, KbDocUploadDto dto);
+
+    /**
+     * 异步处理文档（解析内容、索引ES）
+     *
+     * @param docId 文档ID
+     */
+    void asyncProcessDoc(Long docId);
+
+    /**
+     * 解析文档内容并索引到ES
+     *
+     * @param docId 文档ID
+     */
+    void parseAndIndexDoc(Long docId);
 
     /**
      * 发布文档
@@ -110,5 +136,13 @@ public interface IKbDocService {
      * @return 结果
      */
     int deleteDocById(Long docId);
+
+    /**
+     * 检查文件类型是否支持
+     *
+     * @param fileType 文件扩展名
+     * @return 是否支持
+     */
+    boolean isFileTypeSupported(String fileType);
 
 }

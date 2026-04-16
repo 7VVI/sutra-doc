@@ -8,6 +8,7 @@ import java.util.List;
 
 /**
  * KB ES搜索服务接口
+ * 参考旧系统 IKmDocService.searchESKmDoc 设计
  *
  * @author hmoob
  */
@@ -15,6 +16,7 @@ public interface IKbEsSearchService {
 
     /**
      * 全文检索(带高亮)
+     * 支持普通检索和高级检索两种模式
      *
      * @param request 搜索请求
      * @return 搜索结果

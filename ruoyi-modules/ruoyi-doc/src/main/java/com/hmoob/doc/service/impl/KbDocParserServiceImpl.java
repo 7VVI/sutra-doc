@@ -3,7 +3,6 @@ package com.hmoob.doc.service.impl;
 import com.alibaba.cloud.ai.parser.tika.TikaDocumentParser;
 import com.hmoob.doc.domain.dto.DocumentParseResult;
 import com.hmoob.doc.service.IKbDocParserService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
@@ -25,11 +24,19 @@ import java.util.stream.Collectors;
  * @author hmoob
  */
 @Slf4j
-@RequiredArgsConstructor
 @Service
 public class KbDocParserServiceImpl implements IKbDocParserService {
 
+    /**
+     * TikaDocumentParser实例
+     * Spring AI Alibaba不自动配置此bean，需要手动创建
+     */
     private final TikaDocumentParser tikaDocumentParser;
+
+    public KbDocParserServiceImpl() {
+        // 手动创建TikaDocumentParser实例
+        this.tikaDocumentParser = new TikaDocumentParser();
+    }
 
     /**
      * 支持的文件类型集合

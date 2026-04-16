@@ -4,20 +4,20 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
-import com.hmoob.common.tenant.core.TenantEntity;
 
 import java.io.Serial;
+import java.io.Serializable;
+import java.util.Date;
 
 /**
  * KB搜索记录实体类
+ * 注意: 搜索记录表不需要完整的审计字段,仅保留必要的时间字段
  *
  * @author hmoob
  */
 @Data
-@EqualsAndHashCode(callSuper = true)
 @TableName("kb_search_record")
-public class KbSearchRecord extends TenantEntity {
+public class KbSearchRecord implements Serializable {
 
     @Serial
     private static final long serialVersionUID = 1L;
@@ -87,6 +87,16 @@ public class KbSearchRecord extends TenantEntity {
      * 用户ID
      */
     private Long userId;
+
+    /**
+     * 搜索时间
+     */
+    private Date createTime;
+
+    /**
+     * 更新时间
+     */
+    private Date updateTime;
 
     /**
      * 删除标志: 0-正常, 1-已删除

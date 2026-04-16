@@ -23,7 +23,7 @@ CREATE TABLE kb_file (
     `original_name` VARCHAR(200) COMMENT '原始文件名',
     `file_size` bigint DEFAULT 0 COMMENT '文件大小,单位:字节',
     `file_type` VARCHAR(20) COMMENT '文件类型(扩展名)',
-    `mime_type` VARCHAR(50) COMMENT 'MIME类型',
+    `mime_type` VARCHAR(255) COMMENT 'MIME类型',
     `status` tinyint(4) DEFAULT 1 COMMENT '状态: 1-正常, 0-删除',
     `create_by` bigint COMMENT '创建人ID',
     `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

@@ -60,6 +60,16 @@ public interface IKbDocVisitRecordService {
     Long recordVisit(Long docId, Long userId, Integer visitType, String sourceIp);
 
     /**
+     * 记录文档访问（简化版，自动获取当前用户）
+     *
+     * @param docId     文档ID
+     * @param folderId  目录ID
+     * @param visitType 访问类型
+     * @param sourceIp  来源IP地址
+     */
+    void logVisit(Long docId, Long folderId, Integer visitType, String sourceIp);
+
+    /**
      * 获取文档访问统计
      *
      * @param docId 文档ID

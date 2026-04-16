@@ -49,8 +49,6 @@ import com.hmoob.workflow.common.enums.TaskAssigneeType;
 import com.hmoob.workflow.common.enums.TaskOperationEnum;
 import com.hmoob.workflow.common.enums.TaskStatusEnum;
 import com.hmoob.workflow.domain.FlowInstanceBizExt;
-import org.dromara.workflow.domain.bo.*;
-import org.ruoyi.workflow.domain.bo.*;
 import com.hmoob.workflow.domain.vo.FlowCopyVo;
 import com.hmoob.workflow.domain.vo.FlowHisTaskVo;
 import com.hmoob.workflow.domain.vo.FlowTaskVo;

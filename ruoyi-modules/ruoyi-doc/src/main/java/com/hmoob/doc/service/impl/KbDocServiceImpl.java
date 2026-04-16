@@ -1,44 +1,72 @@
 package com.hmoob.doc.service.impl;
 
 import cn.hutool.core.util.ObjectUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import com.hmoob.common.core.constant.SystemConstants;
 import com.hmoob.common.core.exception.ServiceException;
 import com.hmoob.common.core.utils.MapstructUtils;
 import com.hmoob.common.core.utils.StringUtils;
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
+import com.hmoob.common.oss.entity.UploadResult;
+import com.hmoob.common.oss.factory.OssFactory;
+import com.hmoob.common.satoken.utils.LoginHelper;
 import com.hmoob.doc.domain.KbDoc;
+import com.hmoob.doc.domain.KbFile;
+import com.hmoob.doc.domain.KbDocTopicType;
+import com.hmoob.doc.domain.KbDocBusinessType;
 import com.hmoob.doc.domain.bo.KbDocBo;
+import com.hmoob.doc.domain.dto.KbDocUploadDto;
 import com.hmoob.doc.domain.vo.KbDocVo;
+import com.hmoob.doc.domain.vo.KbFileVo;
 import com.hmoob.doc.enums.DocStatusEnum;
+import com.hmoob.doc.enums.ConvertStatusEnum;
+import com.hmoob.doc.enums.ReleaseFlagEnum;
+import com.hmoob.doc.enums.PublicRemarkEnum;
+import com.hmoob.doc.enums.FtiFlagEnum;
 import com.hmoob.doc.mapper.KbDocMapper;
+import com.hmoob.doc.mapper.KbFileMapper;
+import com.hmoob.doc.mapper.KbDocTopicTypeMapper;
+import com.hmoob.doc.mapper.KbDocBusinessTypeMapper;
 import com.hmoob.doc.service.IKbDocService;
+import com.hmoob.doc.service.IKbDocParserService;
+import com.hmoob.doc.es.document.KbDocDocument;
+import com.hmoob.doc.es.service.IKbEsIndexService;
+import com.hmoob.doc.utils.FileUtil;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.InputStream;
 import java.util.List;
+import java.util.Set;
 
 /**
  * KB文档管理 服务实现
  *
  * @author hmoob
  */
+@Slf4j
 @RequiredArgsConstructor
 @Service
 public class KbDocServiceImpl implements IKbDocService {
 
     private final KbDocMapper baseMapper;
+    private final KbFileMapper fileMapper;
+    private final KbDocTopicTypeMapper topicTypeMapper;
+    private final KbDocBusinessTypeMapper businessTypeMapper;
+    private final IKbDocParserService parserService;
+    private final IKbEsIndexService esIndexService;
 
     /**
      * 分页查询文档管理数据
-     *
-     * @param bo        文档信息
-     * @param pageQuery 分页对象
-     * @return 文档信息集合
      */
     @Override
     public TableDataInfo<KbDocVo> selectPageDocList(KbDocBo bo, PageQuery pageQuery) {
@@ -48,9 +76,6 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 查询文档管理数据
-     *
-     * @param bo 文档信息
-     * @return 文档信息集合
      */
     @Override
     public List<KbDocVo> selectDocList(KbDocBo bo) {
@@ -59,9 +84,6 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 构建查询条件
-     *
-     * @param bo 文档信息
-     * @return 查询条件
      */
     private LambdaQueryWrapper<KbDoc> buildQueryWrapper(KbDocBo bo) {
         LambdaQueryWrapper<KbDoc> lqw = Wrappers.lambdaQuery();
@@ -82,9 +104,6 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 根据文档ID查询信息
-     *
-     * @param docId 文档ID
-     * @return 文档信息
      */
     @Override
     public KbDocVo selectDocById(Long docId) {
@@ -93,9 +112,6 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 根据文档编号查询信息
-     *
-     * @param serialNumber 文档编号
-     * @return 文档信息
      */
     @Override
     public KbDocVo selectDocBySerialNumber(String serialNumber) {
@@ -103,10 +119,215 @@ public class KbDocServiceImpl implements IKbDocService {
     }
 
     /**
+     * 上传文档
+     * 包含文件上传、文档保存、异步解析和ES索引
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public KbDocVo uploadDoc(MultipartFile file, KbDocUploadDto dto) {
+        // 1. 校验文件
+        if (file == null || file.isEmpty()) {
+            throw new ServiceException("上传文件不能为空");
+        }
+
+        String originalName = file.getOriginalFilename();
+        String fileType = FileUtil.getFileExtension(originalName);
+
+        // 检查文件类型是否支持
+        if (!FileUtil.isFileTypeSupported(fileType)) {
+            throw new ServiceException("不支持的文件格式: " + fileType);
+        }
+
+        // 2. 计算SHA256并检查重复
+        String sha256 = FileUtil.calculateSha256(file);
+        KbFileVo existingFile = checkFileDuplicate(sha256);
+        if (existingFile != null) {
+            throw new ServiceException("该文件已经存在，无需重复上传。源文件: " + existingFile.getOriginalName());
+        }
+
+        // 3. 上传文件到OSS
+        UploadResult uploadResult;
+        try {
+            // 使用uploadSuffix方法上传文件
+            uploadResult = OssFactory.instance().uploadSuffix(file.getBytes(), originalName, file.getContentType());
+        } catch (Exception e) {
+            log.error("文件上传OSS失败", e);
+            throw new ServiceException("文件上传失败: " + e.getMessage());
+        }
+
+        // 4. 保存文件信息
+        KbFile kbFile = new KbFile();
+        kbFile.setSha256(sha256);
+        kbFile.setPhysicalPath(uploadResult.getUrl());
+        kbFile.setOriginalName(originalName);
+        kbFile.setFileSize(file.getSize());
+        kbFile.setFileType(fileType);
+        kbFile.setMimeType(file.getContentType());
+        kbFile.setStatus(1);
+        fileMapper.insert(kbFile);
+        Long fileId = kbFile.getFileId();
+
+        // 5. 创建文档记录
+        KbDoc doc = new KbDoc();
+        doc.setFolderId(dto.getFolderId() != null ? dto.getFolderId() : 0L);
+        doc.setFileId(fileId);
+        doc.setDocName(originalName);
+        doc.setDocTitle(FileUtil.getDocTitle(dto.getDocTitle(), originalName));
+        doc.setFileType(fileType);
+        doc.setFileSize(file.getSize());
+        doc.setCategory(dto.getCategory());
+        doc.setKeywords(dto.getKeywords());
+        doc.setOrgCode(dto.getOrgCode());
+        doc.setDepId(dto.getDepId());
+        doc.setPublicRemark(dto.getPublicRemark() != null ? dto.getPublicRemark() : PublicRemarkEnum.PRIVATE.getCode());
+        doc.setRemark(dto.getRemark());
+        doc.setStatus(DocStatusEnum.PENDING.getCode());
+        doc.setReleaseFlag(ReleaseFlagEnum.PUBLISHED.getCode());
+        doc.setCurrentVersion(1);
+        doc.setViewCount(0L);
+        doc.setDownloadCount(0L);
+        doc.setCommentCount(0L);
+        doc.setFavouriteCount(0L);
+
+        // 生成文档编号
+        doc.setSerialNumber(generateSerialNumber());
+
+        // 设置转换状态
+        if (FileUtil.isPdf(fileType)) {
+            doc.setConvertFlag(ConvertStatusEnum.NONE.getCode());
+            doc.setPreviewFileId(fileId);
+            doc.setOriginalPreviewFileId(fileId);
+        } else if (FileUtil.needsConversion(fileType)) {
+            doc.setConvertFlag(ConvertStatusEnum.PROCESSING.getCode());
+        } else {
+            doc.setConvertFlag(ConvertStatusEnum.NONE.getCode());
+        }
+
+        // 设置全文检索状态
+        doc.setFtiFlag(FtiFlagEnum.NO.getCode());
+
+        baseMapper.insert(doc);
+        Long docId = doc.getDocId();
+
+        // 6. 保存主题关联
+        if (dto.getTopicIds() != null && !dto.getTopicIds().isEmpty()) {
+            for (Long topicId : dto.getTopicIds()) {
+                KbDocTopicType topicType = new KbDocTopicType();
+                topicType.setDocId(docId);
+                topicType.setTopicId(topicId);
+                topicTypeMapper.insert(topicType);
+            }
+        }
+
+        // 7. 保存业务类型关联
+        if (dto.getBusinessTypes() != null && !dto.getBusinessTypes().isEmpty()) {
+            for (String businessType : dto.getBusinessTypes()) {
+                KbDocBusinessType docBusinessType = new KbDocBusinessType();
+                docBusinessType.setDocId(docId);
+                docBusinessType.setBusinessType(businessType);
+                businessTypeMapper.insert(docBusinessType);
+            }
+        }
+
+        // 8. 异步处理（解析内容、索引ES）
+        asyncProcessDoc(docId);
+
+        log.info("文档上传成功: docId={}, docName={}, fileId={}", docId, originalName, fileId);
+
+        return baseMapper.selectVoById(docId);
+    }
+
+    /**
+     * 异步处理文档（解析内容、索引ES）
+     */
+    @Async
+    @Override
+    public void asyncProcessDoc(Long docId) {
+        try {
+            parseAndIndexDoc(docId);
+        } catch (Exception e) {
+            log.error("异步处理文档失败: docId={}", docId, e);
+            // 更新文档状态为处理失败
+            baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+                .set(KbDoc::getFtiFlag, FtiFlagEnum.FAILED.getCode())
+                .set(KbDoc::getProcessMsg, "异步处理失败: " + e.getMessage())
+                .eq(KbDoc::getDocId, docId));
+        }
+    }
+
+    /**
+     * 解析文档内容并索引到ES
+     */
+    @Override
+    public void parseAndIndexDoc(Long docId) {
+        KbDoc doc = baseMapper.selectById(docId);
+        if (doc == null) {
+            log.warn("文档不存在: docId={}", docId);
+            return;
+        }
+
+        KbFile file = fileMapper.selectById(doc.getFileId());
+        if (file == null) {
+            log.warn("文件不存在: fileId={}", doc.getFileId());
+            return;
+        }
+
+        // 更新状态为处理中
+        baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+            .set(KbDoc::getFtiFlag, FtiFlagEnum.PROCESSING.getCode())
+            .eq(KbDoc::getDocId, docId));
+
+        try {
+            // 解析文档内容
+            String content = "";
+            if (parserService.isSupported(doc.getFileType())) {
+                // 从OSS获取文件内容进行解析
+                try (InputStream inputStream = OssFactory.instance().getObjectContent(file.getPhysicalPath())) {
+                    content = parserService.parseContent(inputStream);
+                } catch (Exception e) {
+                    log.warn("从OSS获取文件内容失败，尝试其他方式: {}", e.getMessage());
+                }
+            }
+
+            // 构建ES文档对象
+            KbDocDocument document = new KbDocDocument();
+            document.setDocId(docId);
+            document.setDocName(doc.getDocName());
+            document.setDocTitle(doc.getDocTitle());
+            document.setContent(content);
+            document.setKeywords(doc.getKeywords());
+            document.setFolderId(doc.getFolderId());
+            document.setFileType(doc.getFileType());
+            document.setStatus(doc.getStatus());
+            document.setReleaseFlag(doc.getReleaseFlag());
+            document.setViewCount(doc.getViewCount());
+            document.setDownloadCount(doc.getDownloadCount());
+            document.setCreateTime(doc.getCreateTime());
+            document.setCreateBy(doc.getCreateBy() != null ? String.valueOf(doc.getCreateBy()) : null);
+            document.setTenantId(LoginHelper.getTenantId());
+
+            // 索引到ES
+            esIndexService.indexDocument(document);
+
+            // 更新文档状态为已处理
+            baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+                .set(KbDoc::getFtiFlag, FtiFlagEnum.YES.getCode())
+                .set(KbDoc::getIndexId, String.valueOf(docId))
+                .eq(KbDoc::getDocId, docId));
+
+            log.info("文档解析并索引ES成功: docId={}, contentLength={}", docId, content.length());
+
+        } catch (Exception e) {
+            log.error("文档解析或ES索引失败: docId={}", docId, e);
+            baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+                .set(KbDoc::getFtiFlag, FtiFlagEnum.FAILED.getCode())
+                .set(KbDoc::getProcessMsg, "解析或索引失败: " + e.getMessage())
+                .eq(KbDoc::getDocId, docId));
+        }
+    }
+
+    /**
      * 发布文档
-     *
-     * @param docId 文档ID
-     * @return 结果
      */
     @Override
     public int publishDoc(Long docId) {
@@ -114,7 +335,6 @@ public class KbDocServiceImpl implements IKbDocService {
         if (ObjectUtil.isNull(doc)) {
             throw new ServiceException("文档不存在，无法发布");
         }
-        // 校验文档状态是否允许发布
         if (doc.getStatus().equals(DocStatusEnum.PUBLISHED.getCode())) {
             throw new ServiceException("文档已发布，请勿重复操作");
         }
@@ -123,15 +343,12 @@ public class KbDocServiceImpl implements IKbDocService {
         }
         return baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
             .set(KbDoc::getStatus, DocStatusEnum.PUBLISHED.getCode())
-            .set(KbDoc::getReleaseFlag, 1)
+            .set(KbDoc::getReleaseFlag, ReleaseFlagEnum.PUBLISHED.getCode())
             .eq(KbDoc::getDocId, docId));
     }
 
     /**
      * 撤回文档
-     *
-     * @param docId 文档ID
-     * @return 结果
      */
     @Override
     public int withdrawDoc(Long docId) {
@@ -139,21 +356,17 @@ public class KbDocServiceImpl implements IKbDocService {
         if (ObjectUtil.isNull(doc)) {
             throw new ServiceException("文档不存在，无法撤回");
         }
-        // 校验文档状态是否允许撤回
         if (!doc.getStatus().equals(DocStatusEnum.PUBLISHED.getCode())) {
             throw new ServiceException("只有已发布的文档才能撤回");
         }
         return baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
             .set(KbDoc::getStatus, DocStatusEnum.WITHDRAWN.getCode())
-            .set(KbDoc::getReleaseFlag, 0)
+            .set(KbDoc::getReleaseFlag, ReleaseFlagEnum.UNPUBLISHED.getCode())
             .eq(KbDoc::getDocId, docId));
     }
 
     /**
      * 增加浏览次数
-     *
-     * @param docId 文档ID
-     * @return 结果
      */
     @Override
     public int incrementViewCount(Long docId) {
@@ -164,9 +377,6 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 增加下载次数
-     *
-     * @param docId 文档ID
-     * @return 结果
      */
     @Override
     public int incrementDownloadCount(Long docId) {
@@ -177,9 +387,6 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 校验文档名称是否唯一
-     *
-     * @param bo 文档信息
-     * @return 结果
      */
     @Override
     public boolean checkDocNameUnique(KbDocBo bo) {
@@ -192,19 +399,15 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 新增保存文档信息
-     *
-     * @param bo 文档信息
-     * @return 结果
      */
     @Override
     public int insertDoc(KbDocBo bo) {
         KbDoc doc = MapstructUtils.convert(bo, KbDoc.class);
-        // 设置初始值
         if (doc.getStatus() == null) {
             doc.setStatus(DocStatusEnum.PENDING.getCode());
         }
         if (doc.getReleaseFlag() == null) {
-            doc.setReleaseFlag(0);
+            doc.setReleaseFlag(ReleaseFlagEnum.UNPUBLISHED.getCode());
         }
         if (doc.getCurrentVersion() == null) {
             doc.setCurrentVersion(1);
@@ -222,7 +425,7 @@ public class KbDocServiceImpl implements IKbDocService {
             doc.setFavouriteCount(0L);
         }
         if (doc.getFtiFlag() == null) {
-            doc.setFtiFlag(0);
+            doc.setFtiFlag(FtiFlagEnum.NO.getCode());
         }
         if (doc.getConvertFlag() == null) {
             doc.setConvertFlag(0);
@@ -232,9 +435,6 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 修改保存文档信息
-     *
-     * @param bo 文档信息
-     * @return 结果
      */
     @Override
     public int updateDoc(KbDocBo bo) {
@@ -248,13 +448,40 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 删除文档管理信息
-     *
-     * @param docId 文档ID
-     * @return 结果
      */
     @Override
     public int deleteDocById(Long docId) {
+        // 删除ES索引
+        try {
+            esIndexService.deleteDocument(docId);
+        } catch (Exception e) {
+            log.warn("删除ES索引失败: docId={}", docId, e);
+        }
         return baseMapper.deleteById(docId);
+    }
+
+
+    /**
+     * 检查文件是否重复
+     */
+    private KbFileVo checkFileDuplicate(String sha256) {
+        return fileMapper.selectBySha256(sha256);
+    }
+
+    /**
+     * 检查文件类型是否支持
+     */
+    @Override
+    public boolean isFileTypeSupported(String fileType) {
+        return FileUtil.isFileTypeSupported(fileType);
+    }
+
+    /**
+     * 生成文档编号
+     */
+    private String generateSerialNumber() {
+        // 使用时间戳+随机数生成唯一编号
+        return "KB" + System.currentTimeMillis() + StrUtil.sub(cn.hutool.core.util.IdUtil.fastSimpleUUID(), 0, 6);
     }
 
 }

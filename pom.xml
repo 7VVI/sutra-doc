@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.dromara</groupId>
+    <groupId>com.hmoob</groupId>
     <artifactId>ruoyi-vue-plus</artifactId>
     <version>${revision}</version>
 
@@ -120,7 +120,7 @@
 
             <!-- common 的依赖配置-->
             <dependency>
-                <groupId>org.dromara</groupId>
+                <groupId>com.hmoob</groupId>
                 <artifactId>ruoyi-common-bom</artifactId>
                 <version>${revision}</version>
                 <type>pom</type>
@@ -327,33 +327,39 @@
             </dependency>
 
             <dependency>
-                <groupId>org.dromara</groupId>
+                <groupId>com.hmoob</groupId>
                 <artifactId>ruoyi-system</artifactId>
                 <version>${revision}</version>
             </dependency>
 
             <dependency>
-                <groupId>org.dromara</groupId>
+                <groupId>com.hmoob</groupId>
                 <artifactId>ruoyi-job</artifactId>
                 <version>${revision}</version>
             </dependency>
 
             <dependency>
-                <groupId>org.dromara</groupId>
+                <groupId>com.hmoob</groupId>
                 <artifactId>ruoyi-generator</artifactId>
                 <version>${revision}</version>
             </dependency>
 
             <dependency>
-                <groupId>org.dromara</groupId>
+                <groupId>com.hmoob</groupId>
                 <artifactId>ruoyi-demo</artifactId>
                 <version>${revision}</version>
             </dependency>
 
             <!--  工作流模块  -->
             <dependency>
-                <groupId>org.dromara</groupId>
+                <groupId>com.hmoob</groupId>
                 <artifactId>ruoyi-workflow</artifactId>
+                <version>${revision}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.hmoob</groupId>
+                <artifactId>ruoyi-doc</artifactId>
                 <version>${revision}</version>
             </dependency>
 

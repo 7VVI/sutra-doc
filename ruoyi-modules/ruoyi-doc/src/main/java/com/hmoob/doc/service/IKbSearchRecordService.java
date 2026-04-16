@@ -5,6 +5,7 @@ import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.doc.domain.bo.KbSearchRecordBo;
 import com.hmoob.doc.domain.vo.KbSearchRecordVo;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 
 /**
@@ -40,6 +41,15 @@ public interface IKbSearchRecordService {
     List<KbSearchRecordVo> selectSearchRecordByUserId(Long userId);
 
     /**
+     * 获取用户搜索历史
+     *
+     * @param userId 用户ID
+     * @param limit  数量限制
+     * @return 搜索历史列表
+     */
+    List<KbSearchRecordVo> getUserSearchHistory(Long userId, Integer limit);
+
+    /**
      * 记录搜索操作
      *
      * @param keywords    搜索关键词
@@ -50,11 +60,24 @@ public interface IKbSearchRecordService {
     Long recordSearch(String keywords, Long userId, Integer resultCount);
 
     /**
+     * 记录搜索日志(完整参数)
+     *
+     * @param keywords      搜索关键词
+     * @param resultCount   搜索结果数量
+     * @param topicCodes    主题编码
+     * @param businessTypes 业务类型
+     * @param folderIds     文件夹ID
+     * @param req           HTTP请求对象
+     */
+    void logSearch(String keywords, Long resultCount, String[] topicCodes,
+                   String[] businessTypes, Long[] folderIds, HttpServletRequest req);
+
+    /**
      * 获取热门搜索关键词
      *
      * @param limit 数量限制
      * @param days  时间范围(最近N天)
-     * @return 热门关键词列表
+     * @return 门关键词列表
      */
     List<String> getHotKeywords(Integer limit, Integer days);
 

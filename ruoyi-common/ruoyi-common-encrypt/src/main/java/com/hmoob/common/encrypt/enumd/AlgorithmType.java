@@ -3,8 +3,7 @@ package com.hmoob.common.encrypt.enumd;
 import com.hmoob.common.encrypt.core.encryptor.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
-import org.dromara.common.encrypt.core.encryptor.*;
-import org.ruoyi.common.encrypt.core.encryptor.*;
+
 
 /**
  * 算法名称

@@ -16,8 +16,6 @@ import com.hmoob.common.core.constant.SystemConstants;
 import com.hmoob.common.core.domain.dto.DeptDTO;
 import com.hmoob.common.core.exception.ServiceException;
 import com.hmoob.common.core.service.DeptService;
-import org.dromara.common.core.utils.*;
-import org.ruoyi.common.core.utils.*;
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.common.mybatis.helper.DataBaseHelper;

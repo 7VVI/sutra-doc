@@ -10,6 +10,7 @@ import com.hmoob.common.core.utils.MapstructUtils;
 import com.hmoob.common.core.utils.StringUtils;
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
+import com.hmoob.common.satoken.utils.LoginHelper;
 import com.hmoob.doc.domain.KbDocVisitRecord;
 import com.hmoob.doc.domain.bo.KbDocVisitRecordBo;
 import com.hmoob.doc.domain.vo.KbDocVisitRecordVo;
@@ -117,6 +118,34 @@ public class KbDocVisitRecordServiceImpl implements IKbDocVisitRecordService {
         record.setSourceIp(sourceIp);
         baseMapper.insert(record);
         return record.getVisitId();
+    }
+
+    /**
+     * 记录文档访问（简化版，自动获取当前用户）
+     *
+     * @param docId     文档ID
+     * @param folderId  目录ID
+     * @param visitType 访问类型
+     * @param sourceIp  来源IP地址
+     */
+    @Override
+    public void logVisit(Long docId, Long folderId, Integer visitType, String sourceIp) {
+        try {
+            KbDocVisitRecord record = new KbDocVisitRecord();
+            record.setDocId(docId);
+            record.setFolderId(folderId);
+            record.setVisitType(visitType);
+            record.setSourceIp(sourceIp);
+            // 自动获取当前登录用户ID
+            Long userId = LoginHelper.getUserId();
+            if (userId != null) {
+                record.setUserId(userId);
+            }
+            baseMapper.insert(record);
+        } catch (Exception e) {
+            // 记录访问日志失败不影响主流程
+            // 仅记录日志
+        }
     }
 
     /**

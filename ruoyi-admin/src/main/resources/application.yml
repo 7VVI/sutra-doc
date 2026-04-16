@@ -22,7 +22,7 @@ server:
 
 captcha:
   # 是否启用验证码校验
-  enable: true
+  enable: false
   # 验证码类型 math 数组计算 char 字符验证
   type: math
   # 数字验证码位数
@@ -33,7 +33,7 @@ captcha:
 # 日志配置
 logging:
   level:
-    org.dromara: @logging.level@
+    com.hmoob: @logging.level@
     org.springframework: warn
     org.mybatis.spring.mapper: error
     org.apache.fury: warn
@@ -120,7 +120,7 @@ security:
 # 多租户配置
 tenant:
   # 是否开启
-  enable: true
+  enable: false
   # 排除表
   excludes:
     - sys_menu
@@ -139,12 +139,12 @@ tenant:
 mybatis-plus:
   # 自定义配置 是否全局开启逻辑删除 关闭后 所有逻辑删除功能将失效
   enableLogicDelete: true
-  # 多包名使用 例如 org.dromara.**.mapper,org.xxx.**.mapper
-  mapperPackage: org.dromara.**.mapper
+  # 多包名使用 例如 com.hmoob.**.mapper,org.xxx.**.mapper
+  mapperPackage: com.hmoob.**.mapper
   # 对应的 XML 文件位置
   mapperLocations: classpath*:mapper/**/*Mapper.xml
   # 实体扫描，多个package用逗号或者分号分隔
-  typeAliasesPackage: org.dromara.**.domain
+  typeAliasesPackage: com.hmoob.**.domain
   global-config:
     dbConfig:
       # 主键类型
@@ -207,6 +207,8 @@ springdoc:
       packages-to-scan: org.dromara.generator
     - group: 5.工作流模块
       packages-to-scan: org.dromara.workflow
+    - group: 6.知识库模块
+      packages-to-scan: com.hmoob.doc
 
 # 防止XSS攻击
 xss:
@@ -252,7 +254,7 @@ websocket:
 --- # warm-flow工作流配置
 warm-flow:
   # 是否开启工作流，默认true
-  enabled: true
+  enabled: false
   # 是否开启设计器ui
   ui: true
   # 是否显示流程图顶部文字

@@ -84,6 +84,12 @@ public class KbDocDocument implements Serializable {
     private String fileType;
 
     /**
+     * 分类
+     */
+    @Field(type = FieldType.Keyword)
+    private String category;
+
+    /**
      * 组织编码
      */
     @Field(type = FieldType.Keyword)

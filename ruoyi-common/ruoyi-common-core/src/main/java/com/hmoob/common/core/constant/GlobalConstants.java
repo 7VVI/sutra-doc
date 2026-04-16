@@ -9,8 +9,9 @@ public interface GlobalConstants {
 
     /**
      * 全局 redis key (业务无关的key)
+     * v2 prefix to avoid cache deserialization issues after package rename
      */
-    String GLOBAL_REDIS_KEY = "global:";
+    String GLOBAL_REDIS_KEY = "global_v2:";
 
     /**
      * 验证码 redis key

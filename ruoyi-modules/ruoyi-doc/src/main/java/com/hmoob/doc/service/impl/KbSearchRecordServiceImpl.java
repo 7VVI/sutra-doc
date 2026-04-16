@@ -1,24 +1,29 @@
 package com.hmoob.doc.service.impl;
 
 import cn.hutool.core.util.ObjectUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
 import com.hmoob.common.core.constant.SystemConstants;
 import com.hmoob.common.core.utils.MapstructUtils;
 import com.hmoob.common.core.utils.StringUtils;
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
+import com.hmoob.common.satoken.utils.LoginHelper;
 import com.hmoob.doc.domain.KbSearchRecord;
 import com.hmoob.doc.domain.bo.KbSearchRecordBo;
 import com.hmoob.doc.domain.vo.KbSearchRecordVo;
 import com.hmoob.doc.mapper.KbSearchRecordMapper;
 import com.hmoob.doc.service.IKbSearchRecordService;
-import org.springframework.stereotype.Service;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -27,6 +32,7 @@ import java.util.stream.Collectors;
  *
  * @author hmoob
  */
+@Slf4j
 @RequiredArgsConstructor
 @Service
 public class KbSearchRecordServiceImpl implements IKbSearchRecordService {
@@ -178,6 +184,106 @@ public class KbSearchRecordServiceImpl implements IKbSearchRecordService {
     @Override
     public int deleteSearchRecordById(Long searchId) {
         return baseMapper.deleteById(searchId);
+    }
+
+    /**
+     * 获取用户搜索历史
+     *
+     * @param userId 用户ID
+     * @param limit  数量限制
+     * @return 搜索历史列表
+     */
+    @Override
+    public List<KbSearchRecordVo> getUserSearchHistory(Long userId, Integer limit) {
+        if (userId == null) {
+            return List.of();
+        }
+        LambdaQueryWrapper<KbSearchRecord> wrapper = Wrappers.lambdaQuery();
+        wrapper.eq(KbSearchRecord::getDelFlag, SystemConstants.NORMAL);
+        wrapper.eq(KbSearchRecord::getUserId, userId);
+        wrapper.isNotNull(KbSearchRecord::getKeywords);
+        wrapper.orderByDesc(KbSearchRecord::getCreateTime);
+        wrapper.last("LIMIT " + (limit != null ? limit : 20));
+        return baseMapper.selectVoList(wrapper);
+    }
+
+    /**
+     * 记录搜索日志(完整参数)
+     *
+     * @param keywords      搜索关键词
+     * @param resultCount   搜索结果数量
+     * @param topicCodes    主题编码
+     * @param businessTypes 业务类型
+     * @param folderIds     文件夹ID
+     * @param req           HTTP请求对象
+     */
+    @Override
+    public void logSearch(String keywords, Long resultCount, String[] topicCodes,
+                          String[] businessTypes, Long[] folderIds, HttpServletRequest req) {
+        try {
+            KbSearchRecord record = new KbSearchRecord();
+            record.setKeywords(keywords);
+            record.setResultCount(resultCount != null ? resultCount.intValue() : 0);
+            record.setSearchType(1); // 关键词搜索
+
+            // 设置主题编码
+            if (topicCodes != null && topicCodes.length > 0) {
+                record.setTopicCodes(Arrays.stream(topicCodes).collect(Collectors.joining(",")));
+            }
+
+            // 设置业务类型
+            if (businessTypes != null && businessTypes.length > 0) {
+                record.setBusinessTypes(Arrays.stream(businessTypes).collect(Collectors.joining(",")));
+            }
+
+            // 设置文件夹ID
+            if (folderIds != null && folderIds.length > 0) {
+                record.setFolderIds(Arrays.stream(folderIds).map(String::valueOf).collect(Collectors.joining(",")));
+            }
+
+            // 设置来源IP
+            if (req != null) {
+                String sourceIp = getClientIpAddress(req);
+                record.setSourceIp(sourceIp);
+            }
+
+            // 设置用户ID
+            Long userId = LoginHelper.getUserId();
+            if (userId != null) {
+                record.setUserId(userId);
+            }
+
+            baseMapper.insert(record);
+        } catch (Exception e) {
+            log.warn("记录搜索日志失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 获取客户端IP地址
+     */
+    private String getClientIpAddress(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (StrUtil.isBlank(ip) || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("Proxy-Client-IP");
+        }
+        if (StrUtil.isBlank(ip) || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("WL-Proxy-Client-IP");
+        }
+        if (StrUtil.isBlank(ip) || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("HTTP_CLIENT_IP");
+        }
+        if (StrUtil.isBlank(ip) || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("HTTP_X_FORWARDED_FOR");
+        }
+        if (StrUtil.isBlank(ip) || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        // 多个代理时取第一个IP
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        return ip;
     }
 
 }
