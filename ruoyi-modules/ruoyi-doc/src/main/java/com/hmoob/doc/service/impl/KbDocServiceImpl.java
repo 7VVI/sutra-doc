@@ -32,6 +32,7 @@ import com.hmoob.doc.enums.ConvertStatusEnum;
 import com.hmoob.doc.enums.ReleaseFlagEnum;
 import com.hmoob.doc.enums.PublicRemarkEnum;
 import com.hmoob.doc.enums.FtiFlagEnum;
+import com.hmoob.doc.enums.StorageTypeEnum;
 import com.hmoob.doc.mapper.KbDocMapper;
 import com.hmoob.doc.mapper.KbFileMapper;
 import com.hmoob.doc.mapper.KbDocTopicTypeMapper;
@@ -43,7 +44,7 @@ import com.hmoob.doc.es.service.IKbEsIndexService;
 import com.hmoob.doc.utils.FileUtil;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
@@ -56,7 +57,9 @@ import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * KB文档管理 服务实现
@@ -75,6 +78,7 @@ public class KbDocServiceImpl implements IKbDocService {
     private final IKbDocParserService parserService;
     private final IKbEsIndexService esIndexService;
     private final KbUploadProperties uploadProperties;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * 分页查询文档管理数据
@@ -135,7 +139,6 @@ public class KbDocServiceImpl implements IKbDocService {
      * 支持 OSS / 本地存储 两种模式
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public KbDocVo uploadDoc(MultipartFile file, KbDocUploadDto dto) {
         // 1. 校验文件
         if (file == null || file.isEmpty()) {
@@ -163,7 +166,7 @@ public class KbDocServiceImpl implements IKbDocService {
         if (uploadProperties.useLocalStorage()) {
             // 本地存储模式
             physicalPath = saveToLocal(file, originalName);
-            storageType = "local";
+            storageType = StorageTypeEnum.LOCAL.getCode();
             log.info("文件保存到本地: {}", physicalPath);
         } else {
             // OSS 模式（含降级）
@@ -171,13 +174,13 @@ public class KbDocServiceImpl implements IKbDocService {
                 UploadResult uploadResult = OssFactory.instance()
                     .uploadSuffix(file.getBytes(), originalName, file.getContentType());
                 physicalPath = uploadResult.getUrl();
-                storageType = "oss";
+                storageType = StorageTypeEnum.OSS.getCode();
                 log.info("文件上传到OSS: {}", physicalPath);
             } catch (Exception e) {
                 log.warn("OSS上传失败，尝试降级到本地存储: {}", e.getMessage());
                 if (uploadProperties.allowFallback()) {
                     physicalPath = saveToLocal(file, originalName);
-                    storageType = "local";
+                    storageType = StorageTypeEnum.LOCAL.getCode();
                     log.info("降级保存到本地: {}", physicalPath);
                 } else {
                     throw new ServiceException("文件上传失败: " + e.getMessage());
@@ -185,87 +188,93 @@ public class KbDocServiceImpl implements IKbDocService {
             }
         }
 
-        // 4. 保存文件信息
-        KbFile kbFile = new KbFile();
-        kbFile.setSha256(sha256);
-        kbFile.setPhysicalPath(physicalPath);
-        kbFile.setStorageType(storageType);
-        kbFile.setOriginalName(originalName);
-        kbFile.setFileSize(file.getSize());
-        kbFile.setFileType(fileType);
-        kbFile.setMimeType(file.getContentType());
-        kbFile.setStatus(1);
-        fileMapper.insert(kbFile);
-        Long fileId = kbFile.getFileId();
+        // 4-8. 事务内保存文件信息、文档记录、关联数据
+        final String finalPhysicalPath = physicalPath;
+        final String finalStorageType = storageType;
 
-        // 5. 创建文档记录
-        KbDoc doc = new KbDoc();
-        doc.setFolderId(dto.getFolderId() != null ? dto.getFolderId() : 0L);
-        doc.setFileId(fileId);
-        doc.setDocName(originalName);
-        doc.setDocTitle(FileUtil.getDocTitle(dto.getDocTitle(), originalName));
-        doc.setFileType(fileType);
-        doc.setFileSize(file.getSize());
-        doc.setCategory(dto.getCategory());
-        doc.setKeywords(dto.getKeywords());
-        doc.setOrgCode(dto.getOrgCode());
-        doc.setDepId(dto.getDepId());
-        doc.setPublicRemark(dto.getPublicRemark() != null ? dto.getPublicRemark() : PublicRemarkEnum.PRIVATE.getCode());
-        doc.setRemark(dto.getRemark());
-        doc.setStatus(DocStatusEnum.PENDING.getCode());
-        doc.setReleaseFlag(ReleaseFlagEnum.PUBLISHED.getCode());
-        doc.setCurrentVersion(1);
-        doc.setViewCount(0L);
-        doc.setDownloadCount(0L);
-        doc.setCommentCount(0L);
-        doc.setFavouriteCount(0L);
+        return transactionTemplate.execute(status -> {
+            // 4. 保存文件信息
+            KbFile kbFile = new KbFile();
+            kbFile.setSha256(sha256);
+            kbFile.setPhysicalPath(finalPhysicalPath);
+            kbFile.setStorageType(finalStorageType);
+            kbFile.setOriginalName(originalName);
+            kbFile.setFileSize(file.getSize());
+            kbFile.setFileType(fileType);
+            kbFile.setMimeType(file.getContentType());
+            kbFile.setStatus(1);
+            fileMapper.insert(kbFile);
+            Long fileId = kbFile.getFileId();
 
-        // 生成文档编号
-        doc.setSerialNumber(generateSerialNumber());
+            // 5. 创建文档记录
+            KbDoc doc = new KbDoc();
+            doc.setFolderId(dto.getFolderId() != null ? dto.getFolderId() : 0L);
+            doc.setFileId(fileId);
+            doc.setDocName(originalName);
+            doc.setDocTitle(FileUtil.getDocTitle(dto.getDocTitle(), originalName));
+            doc.setFileType(fileType);
+            doc.setFileSize(file.getSize());
+            doc.setCategory(dto.getCategory());
+            doc.setKeywords(dto.getKeywords());
+            doc.setOrgCode(dto.getOrgCode());
+            doc.setDepId(dto.getDepId());
+            doc.setPublicRemark(dto.getPublicRemark() != null ? dto.getPublicRemark() : PublicRemarkEnum.PRIVATE.getCode());
+            doc.setRemark(dto.getRemark());
+            doc.setStatus(DocStatusEnum.PENDING.getCode());
+            doc.setReleaseFlag(ReleaseFlagEnum.PUBLISHED.getCode());
+            doc.setCurrentVersion(1);
+            doc.setViewCount(0L);
+            doc.setDownloadCount(0L);
+            doc.setCommentCount(0L);
+            doc.setFavouriteCount(0L);
 
-        // 设置转换状态
-        if (FileUtil.isPdf(fileType)) {
-            doc.setConvertFlag(ConvertStatusEnum.NONE.getCode());
-            doc.setPreviewFileId(fileId);
-            doc.setOriginalPreviewFileId(fileId);
-        } else if (FileUtil.needsConversion(fileType)) {
-            doc.setConvertFlag(ConvertStatusEnum.PROCESSING.getCode());
-        } else {
-            doc.setConvertFlag(ConvertStatusEnum.NONE.getCode());
-        }
+            // 生成文档编号
+            doc.setSerialNumber(generateSerialNumber());
 
-        // 设置全文检索状态
-        doc.setFtiFlag(FtiFlagEnum.NO.getCode());
-
-        baseMapper.insert(doc);
-        Long docId = doc.getDocId();
-
-        // 6. 保存主题关联
-        if (dto.getTopicIds() != null && !dto.getTopicIds().isEmpty()) {
-            for (Long topicId : dto.getTopicIds()) {
-                KbDocTopicType topicType = new KbDocTopicType();
-                topicType.setDocId(docId);
-                topicType.setTopicId(topicId);
-                topicTypeMapper.insert(topicType);
+            // 设置转换状态
+            if (FileUtil.isPdf(fileType)) {
+                doc.setConvertFlag(ConvertStatusEnum.NONE.getCode());
+                doc.setPreviewFileId(fileId);
+                doc.setOriginalPreviewFileId(fileId);
+            } else if (FileUtil.needsConversion(fileType)) {
+                doc.setConvertFlag(ConvertStatusEnum.PROCESSING.getCode());
+            } else {
+                doc.setConvertFlag(ConvertStatusEnum.NONE.getCode());
             }
-        }
 
-        // 7. 保存业务类型关联
-        if (dto.getBusinessTypes() != null && !dto.getBusinessTypes().isEmpty()) {
-            for (String businessType : dto.getBusinessTypes()) {
-                KbDocBusinessType docBusinessType = new KbDocBusinessType();
-                docBusinessType.setDocId(docId);
-                docBusinessType.setBusinessType(businessType);
-                businessTypeMapper.insert(docBusinessType);
+            // 设置全文检索状态
+            doc.setFtiFlag(FtiFlagEnum.NO.getCode());
+
+            baseMapper.insert(doc);
+            Long docId = doc.getDocId();
+
+            // 6. 保存主题关联
+            if (dto.getTopicIds() != null && !dto.getTopicIds().isEmpty()) {
+                for (Long topicId : dto.getTopicIds()) {
+                    KbDocTopicType topicType = new KbDocTopicType();
+                    topicType.setDocId(docId);
+                    topicType.setTopicId(topicId);
+                    topicTypeMapper.insert(topicType);
+                }
             }
-        }
 
-        // 8. 异步处理（解析内容、索引ES）
-        asyncProcessDoc(docId);
+            // 7. 保存业务类型关联
+            if (dto.getBusinessTypes() != null && !dto.getBusinessTypes().isEmpty()) {
+                for (String businessType : dto.getBusinessTypes()) {
+                    KbDocBusinessType docBusinessType = new KbDocBusinessType();
+                    docBusinessType.setDocId(docId);
+                    docBusinessType.setBusinessType(businessType);
+                    businessTypeMapper.insert(docBusinessType);
+                }
+            }
 
-        log.info("文档上传成功: docId={}, docName={}, fileId={}, storageType={}", docId, originalName, fileId, storageType);
+            // 8. 异步处理（解析内容、索引ES）
+            asyncProcessDoc(docId);
 
-        return baseMapper.selectVoById(docId);
+            log.info("文档上传成功: docId={}, docName={}, fileId={}, storageType={}", docId, originalName, fileId, finalStorageType);
+
+            return baseMapper.selectVoById(docId);
+        });
     }
 
     /**
@@ -357,7 +366,6 @@ public class KbDocServiceImpl implements IKbDocService {
      * 发布文档
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public int publishDoc(Long docId) {
         KbDoc doc = baseMapper.selectById(docId);
         if (ObjectUtil.isNull(doc)) {
@@ -370,27 +378,26 @@ public class KbDocServiceImpl implements IKbDocService {
             throw new ServiceException("文档已归档，不允许发布");
         }
 
-        int result = baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+        Integer result = transactionTemplate.execute(status -> baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
             .set(KbDoc::getStatus, DocStatusEnum.PUBLISHED.getCode())
             .set(KbDoc::getReleaseFlag, ReleaseFlagEnum.PUBLISHED.getCode())
-            .eq(KbDoc::getDocId, docId));
+            .eq(KbDoc::getDocId, docId)));
 
         // 更新ES索引中的发布状态
-        if (result > 0) {
+        if (result != null && result > 0) {
             try {
                 updateEsIndex(docId);
             } catch (Exception e) {
                 log.warn("更新ES索引发布状态失败: docId={}", docId, e);
             }
         }
-        return result;
+        return result != null ? result : 0;
     }
 
     /**
      * 撤回文档
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public int withdrawDoc(Long docId) {
         KbDoc doc = baseMapper.selectById(docId);
         if (ObjectUtil.isNull(doc)) {
@@ -400,20 +407,20 @@ public class KbDocServiceImpl implements IKbDocService {
             throw new ServiceException("只有已发布的文档才能撤回");
         }
 
-        int result = baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+        Integer result = transactionTemplate.execute(status -> baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
             .set(KbDoc::getStatus, DocStatusEnum.WITHDRAWN.getCode())
             .set(KbDoc::getReleaseFlag, ReleaseFlagEnum.UNPUBLISHED.getCode())
-            .eq(KbDoc::getDocId, docId));
+            .eq(KbDoc::getDocId, docId)));
 
         // 更新ES索引中的发布状态
-        if (result > 0) {
+        if (result != null && result > 0) {
             try {
                 updateEsIndex(docId);
             } catch (Exception e) {
                 log.warn("更新ES索引撤回状态失败: docId={}", docId, e);
             }
         }
-        return result;
+        return result != null ? result : 0;
     }
 
     /**
@@ -488,7 +495,6 @@ public class KbDocServiceImpl implements IKbDocService {
      * 修改保存文档信息
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public int updateDoc(KbDocBo bo) {
         KbDoc doc = MapstructUtils.convert(bo, KbDoc.class);
         KbDoc oldDoc = baseMapper.selectById(doc.getDocId());
@@ -496,17 +502,17 @@ public class KbDocServiceImpl implements IKbDocService {
             throw new ServiceException("文档不存在，无法修改");
         }
 
-        int result = baseMapper.updateById(doc);
+        Integer result = transactionTemplate.execute(status -> baseMapper.updateById(doc));
 
         // 检查是否需要更新ES索引(ES相关字段变化时)
-        if (result > 0 && needUpdateEsIndex(oldDoc, doc)) {
+        if (result != null && result > 0 && needUpdateEsIndex(oldDoc, doc)) {
             try {
                 updateEsIndex(doc.getDocId());
             } catch (Exception e) {
                 log.warn("修改文档后更新ES索引失败: docId={}", doc.getDocId(), e);
             }
         }
-        return result;
+        return result != null ? result : 0;
     }
 
     /**
@@ -636,10 +642,25 @@ public class KbDocServiceImpl implements IKbDocService {
      * 读取文件内容（自动根据 storageType 选择读取方式）
      */
     private String readFileContent(KbFile file) {
-        if ("local".equals(file.getStorageType())) {
+        if (StorageTypeEnum.isLocal(file.getStorageType())) {
             return readFromLocal(file.getPhysicalPath());
         }
         return readFromOss(file.getPhysicalPath());
+    }
+
+    /**
+     * 批量获取文档实体信息
+     *
+     * @param docIds 文档ID列表
+     * @return 文档ID到实体的映射
+     */
+    @Override
+    public Map<Long, KbDoc> selectDocEntityMap(List<Long> docIds) {
+        if (docIds == null || docIds.isEmpty()) {
+            return java.util.Collections.emptyMap();
+        }
+        List<KbDoc> docs = baseMapper.selectBatchIds(docIds);
+        return docs.stream().collect(Collectors.toMap(KbDoc::getDocId, d -> d, (a, b) -> a));
     }
 
     /**

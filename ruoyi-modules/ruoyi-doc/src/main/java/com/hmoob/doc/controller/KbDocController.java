@@ -2,6 +2,7 @@ package com.hmoob.doc.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.hmoob.common.core.utils.ServletUtils;
+import com.hmoob.common.satoken.utils.LoginHelper;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.common.web.core.BaseController;
 import com.hmoob.doc.domain.bo.KbDocBo;
+import com.hmoob.doc.domain.bo.KbDocFavouriteBo;
 import com.hmoob.doc.domain.dto.KbDocUploadDto;
 import com.hmoob.doc.domain.vo.KbDocPreviewVo;
 import com.hmoob.doc.domain.vo.KbDocVo;
@@ -24,6 +26,7 @@ import com.hmoob.doc.service.IKbDocService;
 import com.hmoob.doc.service.IKbDocFavouriteService;
 import com.hmoob.doc.service.IKbDocPreviewService;
 import com.hmoob.doc.service.IKbDocVisitRecordService;
+import com.hmoob.doc.service.IKbFileService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -45,6 +48,7 @@ public class KbDocController extends BaseController {
     private final IKbDocFavouriteService favouriteService;
     private final IKbDocPreviewService previewService;
     private final IKbDocVisitRecordService visitRecordService;
+    private final IKbFileService fileService;
 
     /**
      * 查询文档列表
@@ -198,12 +202,15 @@ public class KbDocController extends BaseController {
     @Log(title = "文档管理", businessType = BusinessType.OTHER)
     @GetMapping("/download/{docId}")
     public void download(@PathVariable Long docId, HttpServletResponse response) {
-        // 下载逻辑（从OSS获取文件并返回）
         KbDocVo docVo = docService.selectDocById(docId);
         if (docVo == null) {
             return;
         }
-        // TODO: 实现OSS下载逻辑
+        if (docVo.getFileId() == null) {
+            return;
+        }
+        // 通过文件服务输出文件（强制下载）
+        fileService.serveFile(docVo.getFileId(), response, true);
         // 增加下载次数
         docService.incrementDownloadCount(docId);
         // 记录下载访问日志
@@ -244,8 +251,18 @@ public class KbDocController extends BaseController {
     @Log(title = "文档管理", businessType = BusinessType.OTHER)
     @PostMapping("/favourite/{docId}")
     public R<Void> favourite(@PathVariable Long docId) {
-        // TODO: 实现收藏逻辑
-        return toAjax(true);
+        KbDocVo docVo = docService.selectDocById(docId);
+        if (docVo == null) {
+            return R.fail("文档不存在");
+        }
+        Long userId = LoginHelper.getUserId();
+        if (favouriteService.checkFavourite(docId, userId)) {
+            return R.fail("已收藏该文档");
+        }
+        KbDocFavouriteBo bo = new KbDocFavouriteBo();
+        bo.setDocId(docId);
+        bo.setUserId(userId);
+        return toAjax(favouriteService.addFavourite(bo));
     }
 
     /**
@@ -257,8 +274,8 @@ public class KbDocController extends BaseController {
     @Log(title = "文档管理", businessType = BusinessType.OTHER)
     @PostMapping("/unfavourite/{docId}")
     public R<Void> unfavourite(@PathVariable Long docId) {
-        // TODO: 实现取消收藏逻辑
-        return toAjax(true);
+        Long userId = LoginHelper.getUserId();
+        return toAjax(favouriteService.removeFavouriteByDocId(docId, userId));
     }
 
 }

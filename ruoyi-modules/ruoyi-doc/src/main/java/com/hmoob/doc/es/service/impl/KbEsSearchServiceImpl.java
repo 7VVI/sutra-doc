@@ -21,9 +21,6 @@ import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.common.satoken.utils.LoginHelper;
 import com.hmoob.common.tenant.helper.TenantHelper;
 import com.hmoob.doc.domain.KbDoc;
-import com.hmoob.doc.domain.KbDocFavourite;
-import com.hmoob.doc.mapper.KbDocMapper;
-import com.hmoob.doc.mapper.KbDocFavouriteMapper;
 import com.hmoob.doc.es.constant.KbEsConstant;
 import com.hmoob.doc.es.document.KbDocDocument;
 import com.hmoob.doc.es.document.KbSearchLogDocument;
@@ -31,7 +28,8 @@ import com.hmoob.doc.es.document.KbSearchRequest;
 import com.hmoob.doc.es.document.KbSearchResultVo;
 import com.hmoob.doc.es.document.KbSearchFilterParam;
 import com.hmoob.doc.es.service.IKbEsSearchService;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.hmoob.doc.service.IKbDocService;
+import com.hmoob.doc.service.IKbDocFavouriteService;
 
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -50,8 +48,8 @@ import java.util.stream.Collectors;
 public class KbEsSearchServiceImpl implements IKbEsSearchService {
 
     private final ElasticsearchClient esClient;
-    private final KbDocMapper docMapper;
-    private final KbDocFavouriteMapper favouriteMapper;
+    private final IKbDocService docService;
+    private final IKbDocFavouriteService favouriteService;
 
     /**
      * 高亮前缀标签(红色加粗)
@@ -650,10 +648,7 @@ public class KbEsSearchServiceImpl implements IKbEsSearchService {
         if (CollUtil.isEmpty(docIds)) {
             return Collections.emptyMap();
         }
-
-        List<KbDoc> docs = docMapper.selectBatchIds(docIds);
-        return docs.stream()
-            .collect(Collectors.toMap(KbDoc::getDocId, d -> d, (a, b) -> a));
+        return docService.selectDocEntityMap(docIds);
     }
 
     /**
@@ -665,16 +660,7 @@ public class KbEsSearchServiceImpl implements IKbEsSearchService {
             if (userId == null || CollUtil.isEmpty(docIds)) {
                 return Collections.emptySet();
             }
-
-            LambdaQueryWrapper<KbDocFavourite> wrapper = new LambdaQueryWrapper<>();
-            wrapper.in(KbDocFavourite::getDocId, docIds)
-                .eq(KbDocFavourite::getUserId, userId)
-                .eq(KbDocFavourite::getDelFlag, "0");
-
-            List<KbDocFavourite> favourites = favouriteMapper.selectList(wrapper);
-            return favourites.stream()
-                .map(KbDocFavourite::getDocId)
-                .collect(Collectors.toSet());
+            return favouriteService.getFavouriteDocIds(userId, docIds);
         } catch (Exception e) {
             log.warn("获取收藏信息失败: {}", e.getMessage());
             return Collections.emptySet();

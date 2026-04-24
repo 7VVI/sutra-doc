@@ -5,7 +5,9 @@ import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import com.hmoob.common.core.exception.ServiceException;
 import com.hmoob.common.core.utils.MapstructUtils;
 import com.hmoob.common.core.utils.StringUtils;
@@ -14,18 +16,27 @@ import com.hmoob.doc.domain.bo.KbFileBo;
 import com.hmoob.doc.domain.vo.KbFileVo;
 import com.hmoob.doc.mapper.KbFileMapper;
 import com.hmoob.doc.mapper.KbDocMapper;
+import com.hmoob.doc.enums.StorageTypeEnum;
 import com.hmoob.doc.service.IKbFileService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
 /**
  * KB文件管理 服务实现
  *
  * @author hmoob
  */
+@Slf4j
 @RequiredArgsConstructor
 @Service
 public class KbFileServiceImpl implements IKbFileService {
@@ -171,6 +182,95 @@ public class KbFileServiceImpl implements IKbFileService {
             throw new ServiceException("文件被文档引用，不允许删除");
         }
         return baseMapper.deleteById(fileId);
+    }
+
+    /**
+     * 根据文件ID获取文件实体
+     *
+     * @param fileId 文件ID
+     * @return 文件实体
+     */
+    @Override
+    public KbFile getFileEntityById(Long fileId) {
+        return baseMapper.selectById(fileId);
+    }
+
+    /**
+     * 输出文件内容到响应流
+     *
+     * @param fileId        文件ID
+     * @param response      HTTP响应
+     * @param forceDownload 是否强制下载
+     */
+    @Override
+    public void serveFile(Long fileId, HttpServletResponse response, boolean forceDownload) {
+        KbFile file = baseMapper.selectById(fileId);
+        if (file == null) {
+            writeError(response, 404, "文件不存在");
+            return;
+        }
+
+        if (StorageTypeEnum.isLocal(file.getStorageType())) {
+            serveLocalFile(file, response, forceDownload);
+        } else {
+            // OSS存储: 重定向到OSS URL
+            try {
+                response.sendRedirect(file.getPhysicalPath());
+            } catch (IOException e) {
+                log.error("重定向到OSS失败: fileId={}", fileId, e);
+                writeError(response, 500, "获取文件失败");
+            }
+        }
+    }
+
+    /**
+     * 从本地磁盘读取文件并流式输出
+     */
+    private void serveLocalFile(KbFile file, HttpServletResponse response, boolean forceDownload) {
+        File localFile = new File(file.getPhysicalPath());
+        if (!localFile.exists()) {
+            writeError(response, 404, "本地文件不存在");
+            return;
+        }
+
+        String contentType = StringUtils.isNotBlank(file.getMimeType())
+            ? file.getMimeType()
+            : MediaType.APPLICATION_OCTET_STREAM_VALUE;
+        response.setContentType(contentType);
+        response.setContentLengthLong(localFile.length());
+
+        String encodedName = URLEncoder.encode(file.getOriginalName(), StandardCharsets.UTF_8)
+            .replaceAll("\\+", "%20");
+
+        if (forceDownload) {
+            response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename*=UTF-8''" + encodedName);
+        } else {
+            response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                "inline; filename*=UTF-8''" + encodedName);
+        }
+
+        try (FileInputStream fis = new FileInputStream(localFile);
+             OutputStream os = response.getOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                os.write(buffer, 0, bytesRead);
+            }
+            os.flush();
+        } catch (IOException e) {
+            log.error("输出本地文件失败: fileId={}, path={}", file.getFileId(), file.getPhysicalPath(), e);
+        }
+    }
+
+    private void writeError(HttpServletResponse response, int status, String message) {
+        response.setStatus(status);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        try {
+            response.getWriter().write("{\"code\":" + status + ",\"msg\":\"" + message + "\",\"data\":null}");
+        } catch (IOException ignored) {
+        }
     }
 
 }

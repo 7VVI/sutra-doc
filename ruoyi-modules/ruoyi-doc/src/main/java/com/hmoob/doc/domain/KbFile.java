@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import com.hmoob.common.tenant.core.TenantEntity;
+import com.hmoob.doc.enums.StorageTypeEnum;
 
 import java.io.Serial;
 
@@ -41,6 +42,7 @@ public class KbFile extends TenantEntity {
 
     /**
      * 存储类型: oss-对象存储, local-本地存储
+     * @see StorageTypeEnum
      */
     private String storageType;
 

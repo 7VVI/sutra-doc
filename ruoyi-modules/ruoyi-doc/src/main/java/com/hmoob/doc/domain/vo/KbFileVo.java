@@ -41,6 +41,7 @@ public class KbFileVo implements Serializable {
 
     /**
      * 存储类型: oss-对象存储, local-本地存储
+     * @see com.hmoob.doc.enums.StorageTypeEnum
      */
     private String storageType;
 

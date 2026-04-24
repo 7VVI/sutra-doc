@@ -1,5 +1,6 @@
 package com.hmoob.doc.service.impl;
 
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ObjectUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -14,7 +15,10 @@ import com.hmoob.doc.mapper.KbDocFavouriteMapper;
 import com.hmoob.doc.service.IKbDocFavouriteService;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * KB文档收藏 服务实现
@@ -121,6 +125,28 @@ public class KbDocFavouriteServiceImpl implements IKbDocFavouriteService {
     @Override
     public KbDocFavouriteVo getFavouriteInfo(Long docId, Long userId) {
         return baseMapper.selectByDocIdAndUserId(docId, userId);
+    }
+
+    /**
+     * 获取用户在指定文档中已收藏的文档ID集合
+     *
+     * @param userId 用户ID
+     * @param docIds 文档ID列表
+     * @return 已收藏的文档ID集合
+     */
+    @Override
+    public Set<Long> getFavouriteDocIds(Long userId, List<Long> docIds) {
+        if (userId == null || CollUtil.isEmpty(docIds)) {
+            return Collections.emptySet();
+        }
+        LambdaQueryWrapper<KbDocFavourite> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(KbDocFavourite::getDocId, docIds)
+            .eq(KbDocFavourite::getUserId, userId)
+            .eq(KbDocFavourite::getDelFlag, "0");
+        List<KbDocFavourite> favourites = baseMapper.selectList(wrapper);
+        return favourites.stream()
+            .map(KbDocFavourite::getDocId)
+            .collect(Collectors.toSet());
     }
 
 }

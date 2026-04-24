@@ -3,6 +3,7 @@ package com.hmoob.doc.config;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import com.hmoob.doc.enums.StorageTypeEnum;
 
 /**
  * KB文件上传配置
@@ -16,9 +17,9 @@ public class KbUploadProperties {
 
     /**
      * 存储模式: oss-对象存储, local-本地存储
-     * 默认oss，OSS不可用时自动降级为local
+     * @see StorageTypeEnum
      */
-    private String mode = "oss";
+    private String mode = StorageTypeEnum.OSS.getCode();
 
     /**
      * 本地存储根路径
@@ -44,7 +45,7 @@ public class KbUploadProperties {
      * 判断是否使用本地存储
      */
     public boolean useLocalStorage() {
-        return "local".equalsIgnoreCase(mode);
+        return StorageTypeEnum.LOCAL.getCode().equalsIgnoreCase(mode);
     }
 
     /**

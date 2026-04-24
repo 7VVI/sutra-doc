@@ -4,6 +4,7 @@ import com.hmoob.doc.domain.bo.KbDocFavouriteBo;
 import com.hmoob.doc.domain.vo.KbDocFavouriteVo;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * KB文档收藏 服务层
@@ -70,5 +71,14 @@ public interface IKbDocFavouriteService {
      * @return 收藏信息(未收藏返回null)
      */
     KbDocFavouriteVo getFavouriteInfo(Long docId, Long userId);
+
+    /**
+     * 获取用户在指定文档中已收藏的文档ID集合
+     *
+     * @param userId 用户ID
+     * @param docIds 文档ID列表
+     * @return 已收藏的文档ID集合
+     */
+    Set<Long> getFavouriteDocIds(Long userId, List<Long> docIds);
 
 }

@@ -1,7 +1,9 @@
 package com.hmoob.doc.service;
 
+import com.hmoob.doc.domain.KbFile;
 import com.hmoob.doc.domain.bo.KbFileBo;
 import com.hmoob.doc.domain.vo.KbFileVo;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
@@ -60,5 +62,22 @@ public interface IKbFileService {
      * @return 结果
      */
     int deleteFileById(Long fileId);
+
+    /**
+     * 根据文件ID获取文件实体（用于文件内容输出）
+     *
+     * @param fileId 文件ID
+     * @return 文件实体
+     */
+    KbFile getFileEntityById(Long fileId);
+
+    /**
+     * 输出文件内容到响应流（支持本地存储和OSS）
+     *
+     * @param fileId        文件ID
+     * @param response      HTTP响应
+     * @param forceDownload 是否强制下载
+     */
+    void serveFile(Long fileId, HttpServletResponse response, boolean forceDownload);
 
 }

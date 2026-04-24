@@ -2,12 +2,14 @@ package com.hmoob.doc.service;
 
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
+import com.hmoob.doc.domain.KbDoc;
 import com.hmoob.doc.domain.bo.KbDocBo;
 import com.hmoob.doc.domain.dto.KbDocUploadDto;
 import com.hmoob.doc.domain.vo.KbDocVo;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * KB文档管理 服务层
@@ -152,5 +154,13 @@ public interface IKbDocService {
      * @param docId 文档ID
      */
     void updateEsIndex(Long docId);
+
+    /**
+     * 批量获取文档实体信息（用于ES搜索结果补充DB信息）
+     *
+     * @param docIds 文档ID列表
+     * @return 文档ID到实体的映射
+     */
+    Map<Long, KbDoc> selectDocEntityMap(List<Long> docIds);
 
 }
