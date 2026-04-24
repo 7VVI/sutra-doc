@@ -40,6 +40,11 @@ public class KbFile extends TenantEntity {
     private String physicalPath;
 
     /**
+     * 存储类型: oss-对象存储, local-本地存储
+     */
+    private String storageType;
+
+    /**
      * 原始文件名
      */
     private String originalName;

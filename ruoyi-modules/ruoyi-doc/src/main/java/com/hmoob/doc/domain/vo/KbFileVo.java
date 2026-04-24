@@ -40,6 +40,11 @@ public class KbFileVo implements Serializable {
     private String physicalPath;
 
     /**
+     * 存储类型: oss-对象存储, local-本地存储
+     */
+    private String storageType;
+
+    /**
      * 原始文件名
      */
     @ExcelProperty(value = "原始文件名")

@@ -139,6 +139,19 @@ kb.elasticsearch:
   username: elastic
   password: xxxxxxx
 
+##KB文件上传配置
+kb.upload:
+  # 存储模式: oss-对象存储, local-本地存储
+  mode: local
+  # 本地存储根路径(绝对路径)
+  local-path: /data/kb/upload
+  # 本地文件访问URL前缀
+  local-url-prefix: /kb/file/content
+  # 最大文件大小(MB)
+  max-file-size: 100
+  # OSS不可用时是否自动降级到本地存储
+  fallback-to-local: true
+
 --- # mail 邮件发送
 mail:
   enabled: false

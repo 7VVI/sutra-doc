@@ -1,5 +1,6 @@
 package com.hmoob.doc.service.impl;
 
+import cn.hutool.core.io.FileTypeUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -17,6 +18,7 @@ import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.common.oss.entity.UploadResult;
 import com.hmoob.common.oss.factory.OssFactory;
 import com.hmoob.common.satoken.utils.LoginHelper;
+import com.hmoob.doc.config.KbUploadProperties;
 import com.hmoob.doc.domain.KbDoc;
 import com.hmoob.doc.domain.KbFile;
 import com.hmoob.doc.domain.KbDocTopicType;
@@ -44,9 +46,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Set;
+import java.util.Objects;
 
 /**
  * KB文档管理 服务实现
@@ -64,6 +74,7 @@ public class KbDocServiceImpl implements IKbDocService {
     private final KbDocBusinessTypeMapper businessTypeMapper;
     private final IKbDocParserService parserService;
     private final IKbEsIndexService esIndexService;
+    private final KbUploadProperties uploadProperties;
 
     /**
      * 分页查询文档管理数据
@@ -121,6 +132,7 @@ public class KbDocServiceImpl implements IKbDocService {
     /**
      * 上传文档
      * 包含文件上传、文档保存、异步解析和ES索引
+     * 支持 OSS / 本地存储 两种模式
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -145,20 +157,39 @@ public class KbDocServiceImpl implements IKbDocService {
             throw new ServiceException("该文件已经存在，无需重复上传。源文件: " + existingFile.getOriginalName());
         }
 
-        // 3. 上传文件到OSS
-        UploadResult uploadResult;
-        try {
-            // 使用uploadSuffix方法上传文件
-            uploadResult = OssFactory.instance().uploadSuffix(file.getBytes(), originalName, file.getContentType());
-        } catch (Exception e) {
-            log.error("文件上传OSS失败", e);
-            throw new ServiceException("文件上传失败: " + e.getMessage());
+        // 3. 保存文件（OSS 或 本地）
+        String physicalPath;
+        String storageType;
+        if (uploadProperties.useLocalStorage()) {
+            // 本地存储模式
+            physicalPath = saveToLocal(file, originalName);
+            storageType = "local";
+            log.info("文件保存到本地: {}", physicalPath);
+        } else {
+            // OSS 模式（含降级）
+            try {
+                UploadResult uploadResult = OssFactory.instance()
+                    .uploadSuffix(file.getBytes(), originalName, file.getContentType());
+                physicalPath = uploadResult.getUrl();
+                storageType = "oss";
+                log.info("文件上传到OSS: {}", physicalPath);
+            } catch (Exception e) {
+                log.warn("OSS上传失败，尝试降级到本地存储: {}", e.getMessage());
+                if (uploadProperties.allowFallback()) {
+                    physicalPath = saveToLocal(file, originalName);
+                    storageType = "local";
+                    log.info("降级保存到本地: {}", physicalPath);
+                } else {
+                    throw new ServiceException("文件上传失败: " + e.getMessage());
+                }
+            }
         }
 
         // 4. 保存文件信息
         KbFile kbFile = new KbFile();
         kbFile.setSha256(sha256);
-        kbFile.setPhysicalPath(uploadResult.getUrl());
+        kbFile.setPhysicalPath(physicalPath);
+        kbFile.setStorageType(storageType);
         kbFile.setOriginalName(originalName);
         kbFile.setFileSize(file.getSize());
         kbFile.setFileType(fileType);
@@ -232,7 +263,7 @@ public class KbDocServiceImpl implements IKbDocService {
         // 8. 异步处理（解析内容、索引ES）
         asyncProcessDoc(docId);
 
-        log.info("文档上传成功: docId={}, docName={}, fileId={}", docId, originalName, fileId);
+        log.info("文档上传成功: docId={}, docName={}, fileId={}, storageType={}", docId, originalName, fileId, storageType);
 
         return baseMapper.selectVoById(docId);
     }
@@ -257,6 +288,7 @@ public class KbDocServiceImpl implements IKbDocService {
 
     /**
      * 解析文档内容并索引到ES
+     * 支持 OSS / 本地 两种读取方式
      */
     @Override
     public void parseAndIndexDoc(Long docId) {
@@ -281,12 +313,7 @@ public class KbDocServiceImpl implements IKbDocService {
             // 解析文档内容
             String content = "";
             if (parserService.isSupported(doc.getFileType())) {
-                // 从OSS获取文件内容进行解析
-                try (InputStream inputStream = OssFactory.instance().getObjectContent(file.getPhysicalPath())) {
-                    content = parserService.parseContent(inputStream);
-                } catch (Exception e) {
-                    log.warn("从OSS获取文件内容失败，尝试其他方式: {}", e.getMessage());
-                }
+                content = readFileContent(file);
             }
 
             // 构建ES文档对象
@@ -525,7 +552,7 @@ public class KbDocServiceImpl implements IKbDocService {
         }
 
         // 检查是否已索引
-        if (doc.getFtiFlag() != FtiFlagEnum.YES.getCode()) {
+        if (!Objects.equals(doc.getFtiFlag(), FtiFlagEnum.YES.getCode())) {
             log.info("文档尚未完成索引，跳过更新: docId={}, ftiFlag={}", docId, doc.getFtiFlag());
             return;
         }
@@ -575,8 +602,75 @@ public class KbDocServiceImpl implements IKbDocService {
      * 生成文档编号
      */
     private String generateSerialNumber() {
-        // 使用时间戳+随机数生成唯一编号
         return "KB" + System.currentTimeMillis() + StrUtil.sub(cn.hutool.core.util.IdUtil.fastSimpleUUID(), 0, 6);
+    }
+
+    // ========== 本地存储辅助方法 ==========
+
+    /**
+     * 保存文件到本地磁盘
+     * 路径规则: {localPath}/{yyyy-MM-dd}/{uuid}.{ext}
+     *
+     * @return 文件绝对路径
+     */
+    private String saveToLocal(MultipartFile file, String originalName) {
+        try {
+            String dateDir = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            String ext = FileUtil.getFileExtension(originalName);
+            String fileName = cn.hutool.core.util.IdUtil.fastSimpleUUID() + (StrUtil.isNotBlank(ext) ? "." + ext : "");
+
+            Path dirPath = Paths.get(uploadProperties.getLocalPath(), dateDir);
+            Files.createDirectories(dirPath);
+
+            Path filePath = dirPath.resolve(fileName);
+            file.transferTo(filePath.toFile());
+
+            return filePath.toAbsolutePath().toString();
+        } catch (IOException e) {
+            log.error("保存文件到本地失败: {}", originalName, e);
+            throw new ServiceException("保存文件到本地失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 读取文件内容（自动根据 storageType 选择读取方式）
+     */
+    private String readFileContent(KbFile file) {
+        if ("local".equals(file.getStorageType())) {
+            return readFromLocal(file.getPhysicalPath());
+        }
+        return readFromOss(file.getPhysicalPath());
+    }
+
+    /**
+     * 从本地磁盘读取文件并解析内容
+     */
+    private String readFromLocal(String localPath) {
+        try {
+            File localFile = new File(localPath);
+            if (!localFile.exists()) {
+                log.warn("本地文件不存在: {}", localPath);
+                return "";
+            }
+            try (InputStream is = new FileInputStream(localFile)) {
+                return parserService.parseContent(is);
+            }
+        } catch (Exception e) {
+            log.error("从本地读取文件失败: {}", localPath, e);
+            return "";
+        }
+    }
+
+    /**
+     * 从OSS读取文件并解析内容
+     */
+    private String readFromOss(String ossUrl) {
+        try (InputStream inputStream = OssFactory.instance().getObjectContent(ossUrl)) {
+            return parserService.parseContent(inputStream);
+        } catch (Exception e) {
+            log.warn("从OSS获取文件内容失败: {}", e.getMessage());
+            return "";
+        }
     }
 
 }
