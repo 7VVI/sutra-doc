@@ -23,6 +23,7 @@ import com.hmoob.doc.domain.vo.KbDocPreviewVo;
 import com.hmoob.doc.domain.vo.KbDocVo;
 import com.hmoob.doc.enums.VisitTypeEnum;
 import com.hmoob.doc.service.IKbDocService;
+import com.hmoob.doc.service.IKbDocDownloadService;
 import com.hmoob.doc.service.IKbDocFavouriteService;
 import com.hmoob.doc.service.IKbDocPreviewService;
 import com.hmoob.doc.service.IKbDocVisitRecordService;
@@ -45,6 +46,7 @@ import java.util.List;
 public class KbDocController extends BaseController {
 
     private final IKbDocService docService;
+    private final IKbDocDownloadService downloadService;
     private final IKbDocFavouriteService favouriteService;
     private final IKbDocPreviewService previewService;
     private final IKbDocVisitRecordService visitRecordService;
@@ -195,6 +197,7 @@ public class KbDocController extends BaseController {
 
     /**
      * 下载文档
+     * 每日下载次数限制，超限后发布 KbDownloadLimitExceedEvent 事件
      *
      * @param docId 文档ID
      */
@@ -209,14 +212,38 @@ public class KbDocController extends BaseController {
         if (docVo.getFileId() == null) {
             return;
         }
+
+        // 检查下载次数限制
+        Long userId = LoginHelper.getUserId();
+        if (!downloadService.checkDownloadAllowed(userId, docId)) {
+            writeDownloadLimitError(response);
+            return;
+        }
+
         // 通过文件服务输出文件（强制下载）
         fileService.serveFile(docVo.getFileId(), response, true);
+
+        // 记录下载计数
+        downloadService.recordDownload(userId, docId);
+
         // 增加下载次数
         docService.incrementDownloadCount(docId);
         // 记录下载访问日志
         String clientIp = ServletUtils.getClientIP();
         visitRecordService.logVisit(docId, docVo.getFolderId(),
             VisitTypeEnum.DOWNLOAD.getCode(), clientIp);
+    }
+
+    /**
+     * 输出下载超限错误信息
+     */
+    private void writeDownloadLimitError(HttpServletResponse response) {
+        response.setStatus(429);
+        response.setContentType("application/json;charset=UTF-8");
+        try {
+            response.getWriter().write("{\"code\":429,\"msg\":\"今日下载次数已达上限\",\"data\":null}");
+        } catch (Exception ignored) {
+        }
     }
 
     /**
