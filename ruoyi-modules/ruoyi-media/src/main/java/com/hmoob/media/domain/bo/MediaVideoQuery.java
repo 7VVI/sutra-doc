@@ -19,6 +19,10 @@ public class MediaVideoQuery extends PageQuery {
     @Serial
     private static final long serialVersionUID = 1L;
 
+    public MediaVideoQuery() {
+        super(10, 1);
+    }
+
     /**
      * 搜索关键词
      */

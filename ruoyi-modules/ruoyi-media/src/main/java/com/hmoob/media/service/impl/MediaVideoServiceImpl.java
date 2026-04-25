@@ -3,6 +3,7 @@ package com.hmoob.media.service.impl;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmoob.common.core.exception.ServiceException;
 import com.hmoob.common.core.utils.MapstructUtils;
@@ -354,7 +355,7 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
                 if (count > 0) {
                     return;
                 }
-                videoMapper.update(null, new LambdaQueryWrapper<MediaVideo>()
+                videoMapper.update(null, new LambdaUpdateWrapper<MediaVideo>()
                     .eq(MediaVideo::getVideoId, videoId)
                     .setSql("view_count = view_count + 1"));
                 MediaVideoAction action = new MediaVideoAction();
@@ -387,7 +388,7 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
                 if (count > 0) {
                     throw new ServiceException("已点赞");
                 }
-                videoMapper.update(null, new LambdaQueryWrapper<MediaVideo>()
+                videoMapper.update(null, new LambdaUpdateWrapper<MediaVideo>()
                     .eq(MediaVideo::getVideoId, videoId)
                     .setSql("like_count = like_count + 1"));
                 MediaVideoAction action = new MediaVideoAction();
@@ -419,7 +420,7 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
                 if (action == null) {
                     throw new ServiceException("未点赞");
                 }
-                videoMapper.update(null, new LambdaQueryWrapper<MediaVideo>()
+                videoMapper.update(null, new LambdaUpdateWrapper<MediaVideo>()
                     .eq(MediaVideo::getVideoId, videoId)
                     .setSql("like_count = like_count - 1"));
                 actionMapper.deleteById(action.getId());
