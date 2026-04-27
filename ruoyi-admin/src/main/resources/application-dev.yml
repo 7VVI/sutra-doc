@@ -142,7 +142,7 @@ kb.elasticsearch:
 ##KB文件上传配置
 kb.upload:
   # 存储模式: oss-对象存储, local-本地存储
-  mode: local
+  mode: oss
   # 本地存储根路径(绝对路径)
   local-path: /data/kb/upload
   # 本地文件访问URL前缀
