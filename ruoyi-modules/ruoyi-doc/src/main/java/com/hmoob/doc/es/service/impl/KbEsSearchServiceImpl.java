@@ -215,6 +215,7 @@ public class KbEsSearchServiceImpl implements IKbEsSearchService {
         folderRequest.setPublishedOnly(request.getPublishedOnly());
         folderRequest.setAdvSearchFlag(request.getAdvSearchFlag());
         folderRequest.setPhraseMatchSearchFlag(request.getPhraseMatchSearchFlag());
+        folderRequest.setDeptIds(request.getDeptIds());
 
         return search(folderRequest);
     }
@@ -384,7 +385,18 @@ public class KbEsSearchServiceImpl implements IKbEsSearchService {
             )));
         }
 
-        // 10. 时间范围过滤
+        // 10. 部门过滤(支持多部门)
+        if (request.getDeptIds() != null && request.getDeptIds().length > 0) {
+            List<FieldValue> deptIdValues = Arrays.stream(request.getDeptIds())
+                .map(FieldValue::of)
+                .collect(Collectors.toList());
+            boolFinalBuilder.filter(Query.of(q -> q.terms(t -> t
+                .field("depId")
+                .terms(tt -> tt.value(deptIdValues))
+            )));
+        }
+
+        // 11. 时间范围过滤
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd");
         if (request.getCreateTimeEnd() != null) {
             final String endTime = format.format(request.getCreateTimeEnd());
@@ -399,7 +411,7 @@ public class KbEsSearchServiceImpl implements IKbEsSearchService {
             )));
         }
 
-        // 11. 租户隔离
+        // 12. 租户隔离
         final String tenantId = StringUtils.isNotBlank(request.getTenantId()) ?
             request.getTenantId() : TenantHelper.getTenantId();
         if (StringUtils.isNotBlank(tenantId)) {
@@ -409,7 +421,7 @@ public class KbEsSearchServiceImpl implements IKbEsSearchService {
             )));
         }
 
-        // 12. 只搜索已发布文档
+        // 13. 只搜索已发布文档
         if (request.getPublishedOnly() != null && request.getPublishedOnly()) {
             boolFinalBuilder.filter(Query.of(q -> q.term(t -> t
                 .field("releaseFlag")
@@ -630,6 +642,8 @@ public class KbEsSearchServiceImpl implements IKbEsSearchService {
                 vo.setPreviewFileId(dbDoc.getPreviewFileId());
                 vo.setFileSize(dbDoc.getFileSize());
                 vo.setPublicRemark(dbDoc.getPublicRemark());
+                vo.setDownloadCount(dbDoc.getDownloadCount());
+                vo.setViewCount(dbDoc.getViewCount());
                 vo.setRemark(dbDoc.getRemark());
                 vo.setCreateBy(dbDoc.getCreateBy() != null ? String.valueOf(dbDoc.getCreateBy()) : null);
             }

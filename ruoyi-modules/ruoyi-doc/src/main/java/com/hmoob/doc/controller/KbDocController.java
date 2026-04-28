@@ -221,9 +221,12 @@ public class KbDocController extends BaseController {
         }
 
         // 通过文件服务输出文件（强制下载）
-        fileService.serveFile(docVo.getFileId(), response, true);
+        boolean success = fileService.serveFile(docVo.getFileId(), response, true);
+        if (!success) {
+            return;
+        }
 
-        // 记录下载计数
+        // 下载成功后记录下载计数
         downloadService.recordDownload(userId, docId);
 
         // 增加下载次数

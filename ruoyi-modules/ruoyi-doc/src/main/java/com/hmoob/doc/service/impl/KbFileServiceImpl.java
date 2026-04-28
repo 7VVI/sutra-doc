@@ -11,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import com.hmoob.common.core.exception.ServiceException;
 import com.hmoob.common.core.utils.MapstructUtils;
 import com.hmoob.common.core.utils.StringUtils;
+import com.hmoob.common.oss.core.OssClient;
+import com.hmoob.common.oss.factory.OssFactory;
 import com.hmoob.doc.domain.KbFile;
 import com.hmoob.doc.domain.bo.KbFileBo;
 import com.hmoob.doc.domain.vo.KbFileVo;
@@ -203,34 +205,62 @@ public class KbFileServiceImpl implements IKbFileService {
      * @param forceDownload 是否强制下载
      */
     @Override
-    public void serveFile(Long fileId, HttpServletResponse response, boolean forceDownload) {
+    public boolean serveFile(Long fileId, HttpServletResponse response, boolean forceDownload) {
         KbFile file = baseMapper.selectById(fileId);
         if (file == null) {
             writeError(response, 404, "文件不存在");
-            return;
+            return false;
         }
 
         if (StorageTypeEnum.isLocal(file.getStorageType())) {
-            serveLocalFile(file, response, forceDownload);
+            return serveLocalFile(file, response, forceDownload);
         } else {
-            // OSS存储: 重定向到OSS URL
-            try {
-                response.sendRedirect(file.getPhysicalPath());
-            } catch (IOException e) {
-                log.error("重定向到OSS失败: fileId={}", fileId, e);
-                writeError(response, 500, "获取文件失败");
+            // OSS存储: 从MinIO下载文件并流式输出
+            return serveOssFile(file, response, forceDownload);
+        }
+    }
+
+    /**
+     * 从OSS(MinIO)下载文件并流式输出
+     */
+    private boolean serveOssFile(KbFile file, HttpServletResponse response, boolean forceDownload) {
+        try {
+            OssClient storage = OssFactory.instance();
+            String objectKey = storage.removeBaseUrl(file.getPhysicalPath());
+
+            String contentType = StringUtils.isNotBlank(file.getMimeType())
+                ? file.getMimeType()
+                : MediaType.APPLICATION_OCTET_STREAM_VALUE;
+            response.setContentType(contentType);
+
+            String encodedName = URLEncoder.encode(file.getOriginalName(), StandardCharsets.UTF_8)
+                .replaceAll("\\+", "%20");
+
+            if (forceDownload) {
+                response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                    "attachment; filename*=UTF-8''" + encodedName);
+            } else {
+                response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                    "inline; filename*=UTF-8''" + encodedName);
             }
+
+            storage.download(objectKey, response.getOutputStream(), response::setContentLengthLong);
+            return true;
+        } catch (Exception e) {
+            log.error("从OSS下载文件失败: fileId={}, path={}", file.getFileId(), file.getPhysicalPath(), e);
+            writeError(response, 500, "获取文件失败");
+            return false;
         }
     }
 
     /**
      * 从本地磁盘读取文件并流式输出
      */
-    private void serveLocalFile(KbFile file, HttpServletResponse response, boolean forceDownload) {
+    private boolean serveLocalFile(KbFile file, HttpServletResponse response, boolean forceDownload) {
         File localFile = new File(file.getPhysicalPath());
         if (!localFile.exists()) {
             writeError(response, 404, "本地文件不存在");
-            return;
+            return false;
         }
 
         String contentType = StringUtils.isNotBlank(file.getMimeType())
@@ -258,8 +288,10 @@ public class KbFileServiceImpl implements IKbFileService {
                 os.write(buffer, 0, bytesRead);
             }
             os.flush();
+            return true;
         } catch (IOException e) {
             log.error("输出本地文件失败: fileId={}, path={}", file.getFileId(), file.getPhysicalPath(), e);
+            return false;
         }
     }
 

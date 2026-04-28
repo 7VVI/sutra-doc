@@ -55,7 +55,7 @@ public class KbDocDownloadServiceImpl implements IKbDocDownloadService {
      * 构建用户每日全局下载计数的Redis key
      */
     private String buildGlobalKey(Long userId) {
-        return KEY_PREFIX_GLOBAL + TenantHelper.getTenantId() + ":" + userId + ":" + LocalDate.now().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+        return KEY_PREFIX_GLOBAL + ":" + userId + ":" + LocalDate.now().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
     }
 
     /**
@@ -65,8 +65,7 @@ public class KbDocDownloadServiceImpl implements IKbDocDownloadService {
     @Override
     public boolean checkDownloadAllowed(Long userId, Long docId) {
         String key = buildGlobalKey(userId);
-        Long count = RedisUtils.getCacheObject(key);
-        long currentCount = ObjectUtil.isNull(count) ? 0 : count;
+        Integer currentCount = ObjectUtil.defaultIfNull(RedisUtils.<Integer>getCacheObject(key), 0);
         return currentCount < DEFAULT_GLOBAL_LIMIT;
     }
 

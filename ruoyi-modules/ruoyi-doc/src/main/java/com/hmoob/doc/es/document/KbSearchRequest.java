@@ -69,6 +69,11 @@ public class KbSearchRequest implements Serializable {
     private Long[] folderIds;
 
     /**
+     * 部门ID列表(筛选条件，支持多部门过滤)
+     */
+    private Long[] deptIds;
+
+    /**
      * 文件类型(筛选条件)
      */
     private String fileType;

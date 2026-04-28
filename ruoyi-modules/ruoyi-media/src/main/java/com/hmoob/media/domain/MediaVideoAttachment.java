@@ -1,8 +1,6 @@
 package com.hmoob.media.domain;
 
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableLogic;
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
 import com.hmoob.common.tenant.core.TenantEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -59,4 +57,15 @@ public class MediaVideoAttachment extends TenantEntity {
     @TableLogic
     private String delFlag;
 
+    /**
+     * 租户编号
+     */
+    @TableField(exist = false)
+    private String tenantId;
+
+    /**
+     * 创建部门
+     */
+    @TableField(fill = FieldFill.INSERT,exist = false)
+    private Long createDept;
 }

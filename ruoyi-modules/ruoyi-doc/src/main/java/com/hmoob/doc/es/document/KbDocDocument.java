@@ -96,6 +96,12 @@ public class KbDocDocument implements Serializable {
     private String orgCode;
 
     /**
+     * 部门ID
+     */
+    @Field(type = FieldType.Long)
+    private Long depId;
+
+    /**
      * 租户ID
      */
     @Field(type = FieldType.Keyword)

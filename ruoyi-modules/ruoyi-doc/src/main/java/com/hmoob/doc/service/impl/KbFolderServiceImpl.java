@@ -14,15 +14,19 @@ import com.hmoob.common.core.utils.StringUtils;
 import com.hmoob.common.core.utils.TreeBuildUtils;
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
+import com.hmoob.doc.domain.KbDoc;
 import com.hmoob.doc.domain.KbFolder;
 import com.hmoob.doc.domain.bo.KbFolderBo;
+import com.hmoob.doc.domain.vo.KbDeptDocTreeNodeVo;
 import com.hmoob.doc.domain.vo.KbFolderVo;
 import com.hmoob.doc.mapper.KbFolderMapper;
 import com.hmoob.doc.mapper.KbDocMapper;
 import com.hmoob.doc.service.IKbFolderService;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * KB目录管理 服务实现
@@ -232,6 +236,86 @@ public class KbFolderServiceImpl implements IKbFolderService {
             throw new ServiceException("目录下存在文档，不允许删除");
         }
         return baseMapper.deleteById(folderId);
+    }
+
+    /**
+     * 查询部门下的文档目录结构（懒加载，每次返回一层）
+     *
+     * @param deptId   部门ID
+     * @param parentId 父目录ID（0表示根目录）
+     * @return 当前层级的目录和文档节点列表
+     */
+    @Override
+    public List<KbDeptDocTreeNodeVo> selectDeptDocTree(Long deptId, Long parentId) {
+        if (parentId == null) {
+            parentId = 0L;
+        }
+        List<KbDeptDocTreeNodeVo> result = new ArrayList<>();
+
+        // 1. 查询当前层级的子目录
+        List<KbFolder> folders = baseMapper.selectList(new LambdaQueryWrapper<KbFolder>()
+            .eq(KbFolder::getParentId, parentId)
+            .eq(KbFolder::getStatus, 1)
+            .orderByAsc(KbFolder::getSortOrder));
+
+        // 收集所有子目录ID，用于批量判断是否有子节点
+        List<Long> folderIds = folders.stream()
+            .map(KbFolder::getFolderId)
+            .collect(Collectors.toList());
+
+        // 批量查询哪些子目录有子文件夹
+        List<KbFolder> childFolders = folderIds.isEmpty() ? new ArrayList<>() :
+            baseMapper.selectList(new LambdaQueryWrapper<KbFolder>()
+                .in(KbFolder::getParentId, folderIds)
+                .select(KbFolder::getParentId));
+        java.util.Set<Long> folderHasChildFolders = childFolders.stream()
+            .map(KbFolder::getParentId)
+            .collect(Collectors.toSet());
+
+        // 批量查询哪些子目录下有文档
+        List<KbDoc> childDocs = folderIds.isEmpty() ? new ArrayList<>() :
+            docMapper.selectList(new LambdaQueryWrapper<KbDoc>()
+                .in(KbDoc::getFolderId, folderIds)
+                .select(KbDoc::getFolderId));
+        java.util.Set<Long> folderHasDocs = childDocs.stream()
+            .map(KbDoc::getFolderId)
+            .collect(Collectors.toSet());
+
+        for (KbFolder folder : folders) {
+            KbDeptDocTreeNodeVo node = new KbDeptDocTreeNodeVo();
+            node.setType("folder");
+            node.setId(folder.getFolderId());
+            node.setName(folder.getFolderName());
+            node.setParentId(parentId);
+            node.setSortOrder(folder.getSortOrder());
+            node.setCreateTime(folder.getCreateTime());
+            node.setHasChildren(folderHasChildFolders.contains(folder.getFolderId())
+                || folderHasDocs.contains(folder.getFolderId()));
+            result.add(node);
+        }
+
+        // 2. 查询当前目录下直属的文档
+        List<KbDoc> docs = docMapper.selectList(new LambdaQueryWrapper<KbDoc>()
+            .eq(KbDoc::getFolderId, parentId)
+            .eq(deptId != null, KbDoc::getDepId, deptId)
+            .orderByDesc(KbDoc::getCreateTime));
+
+        for (KbDoc doc : docs) {
+            KbDeptDocTreeNodeVo node = new KbDeptDocTreeNodeVo();
+            node.setType("doc");
+            node.setId(doc.getDocId());
+            node.setName(doc.getDocName());
+            node.setParentId(parentId);
+            node.setFileType(doc.getFileType());
+            node.setFileSize(doc.getFileSize());
+            node.setStatus(doc.getStatus());
+            node.setReleaseFlag(doc.getReleaseFlag());
+            node.setCreateTime(doc.getCreateTime());
+            node.setHasChildren(false);
+            result.add(node);
+        }
+
+        return result;
     }
 
 }

@@ -92,12 +92,16 @@ public class KbSearchController extends BaseController {
         KbSearchRequest request,
         @Parameter(description = "页码") @RequestParam(name = "pageNum", defaultValue = "1") Integer pageNum,
         @Parameter(description = "每页大小") @RequestParam(name = "pageSize", defaultValue = "10") Integer pageSize,
+        @Parameter(description = "部门ID列表") @RequestParam(name = "deptIds", required = false) Long[] deptIds,
         HttpServletRequest req) {
         try {
             request.setPageNum(pageNum);
             request.setPageSize(pageSize);
             request.setAdvSearchFlag(true); // 高级检索标识
             request.setPublishedOnly(true);
+            if (deptIds != null && deptIds.length > 0) {
+                request.setDeptIds(deptIds);
+            }
 
             TableDataInfo<KbSearchResultVo> result = esSearchService.search(request);
 

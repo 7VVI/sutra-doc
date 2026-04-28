@@ -1,8 +1,6 @@
 package com.hmoob.doc.domain;
 
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableLogic;
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import com.hmoob.common.tenant.core.TenantEntity;
@@ -88,5 +86,17 @@ public class KbDocVisitRecord extends TenantEntity {
      */
     @TableLogic
     private String delFlag;
+
+    /**
+     * 更新者
+     */
+    @TableField(fill = FieldFill.INSERT_UPDATE,exist = false)
+    private Long updateBy;
+
+    /**
+     * 创建者
+     */
+    @TableField(fill = FieldFill.INSERT,exist = false)
+    private Long createBy;
 
 }

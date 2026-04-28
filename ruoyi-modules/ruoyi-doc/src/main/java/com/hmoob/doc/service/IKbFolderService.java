@@ -4,6 +4,7 @@ import cn.hutool.core.lang.tree.Tree;
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.doc.domain.bo.KbFolderBo;
+import com.hmoob.doc.domain.vo.KbDeptDocTreeNodeVo;
 import com.hmoob.doc.domain.vo.KbFolderVo;
 
 import java.util.List;
@@ -95,5 +96,14 @@ public interface IKbFolderService {
      * @return 结果
      */
     int deleteFolderById(Long folderId);
+
+    /**
+     * 查询部门下的文档目录结构（懒加载，每次返回一层）
+     *
+     * @param deptId   部门ID
+     * @param parentId 父目录ID（0表示根目录）
+     * @return 当前层级的目录和文档节点列表
+     */
+    List<KbDeptDocTreeNodeVo> selectDeptDocTree(Long deptId, Long parentId);
 
 }

@@ -2,6 +2,7 @@ package com.hmoob.doc.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.hutool.core.lang.tree.Tree;
+import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.common.web.core.BaseController;
 import com.hmoob.doc.domain.bo.KbFolderBo;
 import com.hmoob.doc.domain.vo.KbFolderVo;
+import com.hmoob.doc.domain.vo.KbDeptDocTreeNodeVo;
 import com.hmoob.doc.service.IKbFolderService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -141,6 +143,22 @@ public class KbFolderController extends BaseController {
     public R<KbFolderVo> statistics(@PathVariable Long folderId) {
         KbFolderVo vo = folderService.selectFolderById(folderId);
         return R.ok(vo);
+    }
+
+    /**
+     * 查询部门下的文档目录结构（懒加载，每次返回一层）
+     * 返回当前层级的子目录和文档，点击时传入 parentId 加载下一层
+     *
+     * @param deptId   部门ID（必传）
+     * @param parentId 父目录ID（不传默认0，表示根目录）
+     * @return 当前层级的目录和文档节点列表
+     */
+    @SaCheckPermission("kb:folder:list")
+    @GetMapping("/deptDocTree")
+    public R<List<KbDeptDocTreeNodeVo>> deptDocTree(
+        @Parameter(description = "部门ID") @RequestParam Long deptId,
+        @Parameter(description = "父目录ID（默认0表示根目录）") @RequestParam(required = false, defaultValue = "0") Long parentId) {
+        return R.ok(folderService.selectDeptDocTree(deptId, parentId));
     }
 
 }

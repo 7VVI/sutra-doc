@@ -1,5 +1,6 @@
 package com.hmoob.media.domain;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -60,5 +61,4 @@ public class MediaVideoAction implements Serializable {
      * 删除标志: 0-正常, 1-已删除
      */
     private String delFlag;
-
 }

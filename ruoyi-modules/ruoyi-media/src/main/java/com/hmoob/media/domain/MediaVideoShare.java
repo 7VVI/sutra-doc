@@ -1,5 +1,6 @@
 package com.hmoob.media.domain;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.hmoob.common.tenant.core.TenantEntity;
@@ -58,4 +59,9 @@ public class MediaVideoShare extends TenantEntity {
      */
     private String delFlag;
 
+    /**
+     * 租户编号
+     */
+    @TableField(exist = false)
+    private String tenantId;
 }

@@ -341,6 +341,7 @@ public class KbDocServiceImpl implements IKbDocService {
             document.setCreateTime(doc.getCreateTime());
             document.setCreateBy(doc.getCreateBy() != null ? String.valueOf(doc.getCreateBy()) : null);
             document.setTenantId(LoginHelper.getTenantId());
+            document.setDepId(doc.getDepId());
 
             // 索引到ES
             esIndexService.indexDocument(document);
@@ -578,6 +579,7 @@ public class KbDocServiceImpl implements IKbDocService {
         document.setDownloadCount(doc.getDownloadCount());
         document.setOrgCode(doc.getOrgCode());
         document.setTenantId(LoginHelper.getTenantId());
+        document.setDepId(doc.getDepId());
 
         try {
             esIndexService.updateDocument(document);
@@ -601,7 +603,8 @@ public class KbDocServiceImpl implements IKbDocService {
             || !ObjectUtil.equal(oldDoc.getCategory(), newDoc.getCategory())
             || !ObjectUtil.equal(oldDoc.getStatus(), newDoc.getStatus())
             || !ObjectUtil.equal(oldDoc.getReleaseFlag(), newDoc.getReleaseFlag())
-            || !ObjectUtil.equal(oldDoc.getOrgCode(), newDoc.getOrgCode());
+            || !ObjectUtil.equal(oldDoc.getOrgCode(), newDoc.getOrgCode())
+            || !ObjectUtil.equal(oldDoc.getDepId(), newDoc.getDepId());
     }
 
     /**

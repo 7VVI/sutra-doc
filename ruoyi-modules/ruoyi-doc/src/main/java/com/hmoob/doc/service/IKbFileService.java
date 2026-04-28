@@ -77,7 +77,8 @@ public interface IKbFileService {
      * @param fileId        文件ID
      * @param response      HTTP响应
      * @param forceDownload 是否强制下载
+     * @return 是否成功输出文件
      */
-    void serveFile(Long fileId, HttpServletResponse response, boolean forceDownload);
+    boolean serveFile(Long fileId, HttpServletResponse response, boolean forceDownload);
 
 }
