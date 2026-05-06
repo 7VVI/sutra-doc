@@ -1,10 +1,7 @@
 package com.hmoob.doc.mapper;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.hmoob.common.mybatis.annotation.DataColumn;
-import com.hmoob.common.mybatis.annotation.DataPermission;
 import com.hmoob.common.mybatis.core.mapper.BaseMapperPlus;
-import com.hmoob.common.mybatis.helper.DataBaseHelper;
 import com.hmoob.doc.domain.KbFolder;
 import com.hmoob.doc.domain.vo.KbFolderVo;
 
@@ -15,9 +12,6 @@ import java.util.List;
  *
  * @author hmoob
  */
-@DataPermission({
-    @DataColumn(key = "deptName", value = "create_by")
-})
 public interface KbFolderMapper extends BaseMapperPlus<KbFolder, KbFolderVo> {
 
     /**

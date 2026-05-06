@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import com.hmoob.common.core.constant.SystemConstants;
 import com.hmoob.common.core.exception.ServiceException;
+import com.hmoob.common.core.service.DeptService;
 import com.hmoob.common.core.utils.MapstructUtils;
 import com.hmoob.common.core.utils.StringUtils;
 import com.hmoob.common.core.utils.TreeBuildUtils;
@@ -22,10 +23,13 @@ import com.hmoob.doc.domain.vo.KbFolderVo;
 import com.hmoob.doc.mapper.KbFolderMapper;
 import com.hmoob.doc.mapper.KbDocMapper;
 import com.hmoob.doc.service.IKbFolderService;
+import com.hmoob.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -39,6 +43,7 @@ public class KbFolderServiceImpl implements IKbFolderService {
 
     private final KbFolderMapper baseMapper;
     private final KbDocMapper docMapper;
+    private final DeptService deptService;
 
     /**
      * 分页查询目录管理数据
@@ -95,6 +100,7 @@ public class KbFolderServiceImpl implements IKbFolderService {
         LambdaQueryWrapper<KbFolder> lqw = Wrappers.lambdaQuery();
         lqw.eq(KbFolder::getDelFlag, SystemConstants.NORMAL);
         lqw.eq(ObjectUtil.isNotNull(bo.getFolderId()), KbFolder::getFolderId, bo.getFolderId());
+        lqw.eq(ObjectUtil.isNotNull(bo.getDeptId()), KbFolder::getDeptId, bo.getDeptId());
         lqw.eq(ObjectUtil.isNotNull(bo.getParentId()), KbFolder::getParentId, bo.getParentId());
         lqw.like(StringUtils.isNotBlank(bo.getFolderName()), KbFolder::getFolderName, bo.getFolderName());
         lqw.eq(StringUtils.isNotBlank(bo.getFolderCode()), KbFolder::getFolderCode, bo.getFolderCode());
@@ -162,6 +168,10 @@ public class KbFolderServiceImpl implements IKbFolderService {
     @Override
     public int insertFolder(KbFolderBo bo) {
         KbFolder folder = MapstructUtils.convert(bo, KbFolder.class);
+        // 自动填充当前用户的部门ID
+        if (folder.getDeptId() == null) {
+            folder.setDeptId(LoginHelper.getDeptId());
+        }
         // 设置初始值
         if (folder.getStatus() == null) {
             folder.setStatus(1);
@@ -250,11 +260,16 @@ public class KbFolderServiceImpl implements IKbFolderService {
         if (parentId == null) {
             parentId = 0L;
         }
+        // 如果未传入deptId，使用当前登录用户的部门ID
+        if (deptId == null) {
+            deptId = LoginHelper.getDeptId();
+        }
         List<KbDeptDocTreeNodeVo> result = new ArrayList<>();
 
-        // 1. 查询当前层级的子目录
+        // 1. 查询当前层级的子目录（直接按deptId过滤）
         List<KbFolder> folders = baseMapper.selectList(new LambdaQueryWrapper<KbFolder>()
             .eq(KbFolder::getParentId, parentId)
+            .eq(KbFolder::getDeptId, deptId)
             .eq(KbFolder::getStatus, 1)
             .orderByAsc(KbFolder::getSortOrder));
 
@@ -329,7 +344,7 @@ public class KbFolderServiceImpl implements IKbFolderService {
         if (parentId == null) {
             parentId = 0L;
         }
-        // 查询当前层级的子目录
+        // 直接按当前用户部门ID过滤，只查询自己组织的目录
         List<KbFolderVo> folders = baseMapper.selectVoList(new LambdaQueryWrapper<KbFolder>()
             .eq(KbFolder::getParentId, parentId)
             .eq(KbFolder::getStatus, 1)
@@ -352,6 +367,22 @@ public class KbFolderServiceImpl implements IKbFolderService {
             .collect(Collectors.toSet());
 
         folders.forEach(f -> f.setHasChildren(hasChildSet.contains(f.getFolderId())));
+
+        // 批量查询部门名称，避免N+1
+        List<Long> deptIds = folders.stream()
+            .map(KbFolderVo::getDeptId)
+            .filter(Objects::nonNull)
+            .distinct()
+            .collect(Collectors.toList());
+        if (!deptIds.isEmpty()) {
+            Map<Long, String> deptNameMap = deptService.selectDeptNamesByIds(deptIds);
+            folders.forEach(f -> {
+                if (f.getDeptId() != null) {
+                    f.setDeptName(deptNameMap.get(f.getDeptId()));
+                }
+            });
+        }
+
         return folders;
     }
 

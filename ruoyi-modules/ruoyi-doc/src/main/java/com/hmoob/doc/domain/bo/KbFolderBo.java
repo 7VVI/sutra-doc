@@ -30,6 +30,11 @@ public class KbFolderBo extends BaseEntity {
     private Long folderId;
 
     /**
+     * 部门ID（所属组织）
+     */
+    private Long deptId;
+
+    /**
      * 目录名称
      */
     @NotBlank(message = "目录名称不能为空")

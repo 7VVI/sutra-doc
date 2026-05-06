@@ -32,6 +32,16 @@ public class KbFolderVo implements Serializable {
     private Long folderId;
 
     /**
+     * 部门ID（所属组织）
+     */
+    private Long deptId;
+
+    /**
+     * 部门名称
+     */
+    private String deptName;
+
+    /**
      * 目录名称
      */
     @ExcelProperty(value = "目录名称")

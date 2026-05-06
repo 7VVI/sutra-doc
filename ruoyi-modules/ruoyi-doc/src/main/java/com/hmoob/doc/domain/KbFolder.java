@@ -32,6 +32,11 @@ public class KbFolder extends TenantEntity {
     private Long folderId;
 
     /**
+     * 部门ID（所属组织）
+     */
+    private Long deptId;
+
+    /**
      * 目录名称
      */
     private String folderName;
