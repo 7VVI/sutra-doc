@@ -89,7 +89,7 @@ public class KbFolder extends TenantEntity {
     /**
      * 删除标志: 0-正常, 1-已删除
      */
-    @TableLogic
+//    @TableLogic
     private String delFlag;
 
     /**

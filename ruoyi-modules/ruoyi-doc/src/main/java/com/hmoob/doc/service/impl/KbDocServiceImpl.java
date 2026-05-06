@@ -5,6 +5,8 @@ import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.plugins.IgnoreStrategy;
+import com.baomidou.mybatisplus.core.plugins.InterceptorIgnoreHelper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -301,65 +303,75 @@ public class KbDocServiceImpl implements IKbDocService {
      */
     @Override
     public void parseAndIndexDoc(Long docId) {
-        KbDoc doc = baseMapper.selectById(docId);
-        if (doc == null) {
-            log.warn("文档不存在: docId={}", docId);
-            return;
-        }
-
-        KbFile file = fileMapper.selectById(doc.getFileId());
-        if (file == null) {
-            log.warn("文件不存在: fileId={}", doc.getFileId());
-            return;
-        }
-
-        // 更新状态为处理中
-        baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
-            .set(KbDoc::getFtiFlag, FtiFlagEnum.PROCESSING.getCode())
-            .eq(KbDoc::getDocId, docId));
-
+        // 忽略数据权限（异步线程无登录上下文）
+        InterceptorIgnoreHelper.handle(
+            IgnoreStrategy.builder().dataPermission(true).build()
+        );
+        
         try {
-            // 解析文档内容
-            String content = "";
-            if (parserService.isSupported(doc.getFileType())) {
-                content = readFileContent(file);
+            KbDoc doc = baseMapper.selectById(docId);
+            if (doc == null) {
+                log.warn("文档不存在: docId={}", docId);
+                return;
             }
 
-            // 构建ES文档对象
-            KbDocDocument document = new KbDocDocument();
-            document.setDocId(docId);
-            document.setDocName(doc.getDocName());
-            document.setDocTitle(doc.getDocTitle());
-            document.setContent(content);
-            document.setKeywords(doc.getKeywords());
-            document.setFolderId(doc.getFolderId());
-            document.setFileType(doc.getFileType());
-            document.setStatus(doc.getStatus());
-            document.setReleaseFlag(doc.getReleaseFlag());
-            document.setViewCount(doc.getViewCount());
-            document.setDownloadCount(doc.getDownloadCount());
-            document.setCreateTime(doc.getCreateTime());
-            document.setCreateBy(doc.getCreateBy() != null ? String.valueOf(doc.getCreateBy()) : null);
-            document.setTenantId(LoginHelper.getTenantId());
-            document.setDepId(doc.getDepId());
+            KbFile file = fileMapper.selectById(doc.getFileId());
+            if (file == null) {
+                log.warn("文件不存在: fileId={}", doc.getFileId());
+                return;
+            }
 
-            // 索引到ES
-            esIndexService.indexDocument(document);
-
-            // 更新文档状态为已处理
+            // 更新状态为处理中
             baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
-                .set(KbDoc::getFtiFlag, FtiFlagEnum.YES.getCode())
-                .set(KbDoc::getIndexId, String.valueOf(docId))
+                .set(KbDoc::getFtiFlag, FtiFlagEnum.PROCESSING.getCode())
                 .eq(KbDoc::getDocId, docId));
 
-            log.info("文档解析并索引ES成功: docId={}, contentLength={}", docId, content.length());
+            try {
+                // 解析文档内容
+                String content = "";
+                if (parserService.isSupported(doc.getFileType())) {
+                    content = readFileContent(file);
+                }
 
-        } catch (Exception e) {
-            log.error("文档解析或ES索引失败: docId={}", docId, e);
-            baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
-                .set(KbDoc::getFtiFlag, FtiFlagEnum.FAILED.getCode())
-                .set(KbDoc::getProcessMsg, "解析或索引失败: " + e.getMessage())
-                .eq(KbDoc::getDocId, docId));
+                // 构建ES文档对象
+                KbDocDocument document = new KbDocDocument();
+                document.setDocId(docId);
+                document.setDocName(doc.getDocName());
+                document.setDocTitle(doc.getDocTitle());
+                document.setContent(content);
+                document.setKeywords(doc.getKeywords());
+                document.setFolderId(doc.getFolderId());
+                document.setFileType(doc.getFileType());
+                document.setStatus(doc.getStatus());
+                document.setReleaseFlag(doc.getReleaseFlag());
+                document.setViewCount(doc.getViewCount());
+                document.setDownloadCount(doc.getDownloadCount());
+                document.setCreateTime(doc.getCreateTime());
+                document.setCreateBy(doc.getCreateBy() != null ? String.valueOf(doc.getCreateBy()) : null);
+                document.setTenantId(LoginHelper.getTenantId());
+                document.setDepId(doc.getDepId());
+
+                // 索引到ES
+                esIndexService.indexDocument(document);
+
+                // 更新文档状态为已处理
+                baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+                    .set(KbDoc::getFtiFlag, FtiFlagEnum.YES.getCode())
+                    .set(KbDoc::getIndexId, String.valueOf(docId))
+                    .eq(KbDoc::getDocId, docId));
+
+                log.info("文档解析并索引ES成功: docId={}, contentLength={}", docId, content.length());
+
+            } catch (Exception e) {
+                log.error("文档解析或ES索引失败: docId={}", docId, e);
+                baseMapper.update(null, new LambdaUpdateWrapper<KbDoc>()
+                    .set(KbDoc::getFtiFlag, FtiFlagEnum.FAILED.getCode())
+                    .set(KbDoc::getProcessMsg, "解析或索引失败: " + e.getMessage())
+                    .eq(KbDoc::getDocId, docId));
+            }
+        } finally {
+            // 清除忽略策略
+            InterceptorIgnoreHelper.clearIgnoreStrategy();
         }
     }
 

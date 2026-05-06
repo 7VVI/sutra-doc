@@ -263,3 +263,10 @@ warm-flow:
   node-tooltip: true
   # 默认Authorization，如果有多个token，用逗号分隔
   token-name: ${sa-token.token-name},clientid
+
+kb:
+  file-watch:
+    enabled: true
+    auto-start: true
+    scan-interval: 300
+    debounce-ms: 500
