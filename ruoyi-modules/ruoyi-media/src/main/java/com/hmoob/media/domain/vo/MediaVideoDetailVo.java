@@ -34,11 +34,6 @@ public class MediaVideoDetailVo implements Serializable {
     private String description;
 
     /**
-     * 作者ID
-     */
-    private Long authorId;
-
-    /**
      * 作者名称
      */
     private String authorName;
@@ -102,6 +97,16 @@ public class MediaVideoDetailVo implements Serializable {
      * 点赞用户列表
      */
     private List<MediaWatcherVo> likedUsers;
+
+    /**
+     * 分类标签ID列表
+     */
+    private List<Long> categoryIds;
+
+    /**
+     * 方向标签ID列表
+     */
+    private List<Long> directionIds;
 
     /**
      * 附件列表

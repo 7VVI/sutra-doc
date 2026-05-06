@@ -318,4 +318,41 @@ public class KbFolderServiceImpl implements IKbFolderService {
         return result;
     }
 
+    /**
+     * 懒加载查询子目录列表（每次返回一层）
+     *
+     * @param parentId 父目录ID（0表示根目录）
+     * @return 当前层级的目录列表（含 hasChildren）
+     */
+    @Override
+    public List<KbFolderVo> selectFolderLazyList(Long parentId) {
+        if (parentId == null) {
+            parentId = 0L;
+        }
+        // 查询当前层级的子目录
+        List<KbFolderVo> folders = baseMapper.selectVoList(new LambdaQueryWrapper<KbFolder>()
+            .eq(KbFolder::getParentId, parentId)
+            .eq(KbFolder::getStatus, 1)
+            .orderByAsc(KbFolder::getSortOrder));
+
+        if (folders.isEmpty()) {
+            return folders;
+        }
+
+        // 批量查询哪些目录有子节点
+        List<Long> folderIds = folders.stream()
+            .map(KbFolderVo::getFolderId)
+            .collect(Collectors.toList());
+
+        List<KbFolder> childFolders = baseMapper.selectList(new LambdaQueryWrapper<KbFolder>()
+            .in(KbFolder::getParentId, folderIds)
+            .select(KbFolder::getParentId));
+        java.util.Set<Long> hasChildSet = childFolders.stream()
+            .map(KbFolder::getParentId)
+            .collect(Collectors.toSet());
+
+        folders.forEach(f -> f.setHasChildren(hasChildSet.contains(f.getFolderId())));
+        return folders;
+    }
+
 }

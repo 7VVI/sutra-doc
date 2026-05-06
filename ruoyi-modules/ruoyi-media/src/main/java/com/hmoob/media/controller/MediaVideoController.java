@@ -55,6 +55,14 @@ public class MediaVideoController extends BaseController {
         return R.ok(videoService.selectVideoDetail(videoId));
     }
 
+    /** 编辑视频信息 */
+    @SaCheckPermission("media:video:edit")
+    @PutMapping("/{videoId}")
+    public R<Void> edit(@PathVariable Long videoId, @RequestBody MediaVideoUpdateBo bo) {
+        videoService.updateVideo(videoId, bo);
+        return R.ok();
+    }
+
     /** 删除视频 */
     @SaCheckPermission("media:video:remove")
     @DeleteMapping("/{videoId}")

@@ -106,4 +106,12 @@ public interface IKbFolderService {
      */
     List<KbDeptDocTreeNodeVo> selectDeptDocTree(Long deptId, Long parentId);
 
+    /**
+     * 懒加载查询子目录列表（每次返回一层）
+     *
+     * @param parentId 父目录ID（0表示根目录）
+     * @return 当前层级的目录列表（含 hasChildren）
+     */
+    List<KbFolderVo> selectFolderLazyList(Long parentId);
+
 }

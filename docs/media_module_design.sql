@@ -44,7 +44,7 @@ CREATE TABLE media_video (
     `video_id`     BIGINT       NOT NULL AUTO_INCREMENT COMMENT '视频ID',
     `title`        VARCHAR(255) NOT NULL COMMENT '视频标题',
     `description`  TEXT         DEFAULT NULL COMMENT '视频描述',
-    `author_id`    BIGINT       NOT NULL COMMENT '作者/上传人ID',
+    `author_name`  VARCHAR(100) NOT NULL COMMENT '作者名称',
     `file_type`    VARCHAR(20)  DEFAULT NULL COMMENT '文件格式: mp4, avi, mov等',
     `file_size`    BIGINT       DEFAULT 0 COMMENT '文件大小(字节)',
     `duration`     INT          DEFAULT 0 COMMENT '视频时长(秒)',
@@ -62,7 +62,7 @@ CREATE TABLE media_video (
     PRIMARY KEY (video_id)
 ) COMMENT = '视频主表';
 
-CREATE INDEX idx_media_video_author ON media_video(author_id, del_flag);
+CREATE INDEX idx_media_video_author ON media_video(author_name, del_flag);
 CREATE INDEX idx_media_video_auth_type ON media_video(auth_type, del_flag);
 CREATE INDEX idx_media_video_time ON media_video(del_flag, create_time DESC);
 CREATE INDEX idx_media_video_like ON media_video(del_flag, like_count DESC);

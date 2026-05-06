@@ -161,4 +161,17 @@ public class KbFolderController extends BaseController {
         return R.ok(folderService.selectDeptDocTree(deptId, parentId));
     }
 
+    /**
+     * 懒加载查询子目录列表（每次返回一层，仅目录，含 hasChildren）
+     *
+     * @param parentId 父目录ID（不传默认0，表示根目录）
+     * @return 当前层级的目录列表
+     */
+    @SaCheckPermission("kb:folder:list")
+    @GetMapping("/lazyTree")
+    public R<List<KbFolderVo>> lazyList(
+        @Parameter(description = "父目录ID（默认0表示根目录）") @RequestParam(required = false, defaultValue = "0") Long parentId) {
+        return R.ok(folderService.selectFolderLazyList(parentId));
+    }
+
 }

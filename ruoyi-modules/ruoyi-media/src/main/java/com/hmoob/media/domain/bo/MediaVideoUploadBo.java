@@ -1,7 +1,6 @@
 package com.hmoob.media.domain.bo;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.io.Serial;
@@ -31,10 +30,10 @@ public class MediaVideoUploadBo implements Serializable {
     private String description;
 
     /**
-     * 作者ID
+     * 作者名称
      */
-    @NotNull(message = "作者ID不能为空")
-    private Long authorId;
+    @NotBlank(message = "作者名称不能为空")
+    private String authorName;
 
     /**
      * 授权类型: 0-公开, 1-指定用户/角色

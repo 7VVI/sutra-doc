@@ -29,9 +29,9 @@ public class MediaVideoQuery extends PageQuery {
     private String keyword;
 
     /**
-     * 作者ID列表
+     * 作者名称（模糊搜索）
      */
-    private List<Long> authorIds;
+    private String authorName;
 
     /**
      * 分类标签ID列表

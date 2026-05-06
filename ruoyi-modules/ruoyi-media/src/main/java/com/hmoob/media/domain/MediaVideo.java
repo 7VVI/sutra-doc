@@ -37,9 +37,9 @@ public class MediaVideo extends TenantEntity {
     private String description;
 
     /**
-     * 作者ID
+     * 作者名称
      */
-    private Long authorId;
+    private String authorName;
 
     /**
      * 文件类型

@@ -1,5 +1,7 @@
 package com.hmoob.media.domain.vo;
 
+import com.hmoob.media.domain.MediaVideo;
+import io.github.linpeilie.annotations.AutoMapper;
 import lombok.Data;
 
 import java.io.Serial;
@@ -12,6 +14,7 @@ import java.util.Date;
  * @author hmoob
  */
 @Data
+@AutoMapper(target = MediaVideo.class)
 public class MediaVideoVo implements Serializable {
 
     @Serial
@@ -33,11 +36,6 @@ public class MediaVideoVo implements Serializable {
     private String description;
 
     /**
-     * 作者ID
-     */
-    private Long authorId;
-
-    /**
      * 作者名称
      */
     private String authorName;
@@ -45,7 +43,7 @@ public class MediaVideoVo implements Serializable {
     /**
      * 缩略图URL
      */
-    private String thumbnailUrl;
+    private String thumbnail;
 
     /**
      * 文件类型

@@ -17,7 +17,9 @@ import com.hmoob.media.domain.MediaVideo;
 import com.hmoob.media.domain.MediaVideoAction;
 import com.hmoob.media.domain.MediaVideoAttachment;
 import com.hmoob.media.domain.MediaVideoTag;
+import com.hmoob.media.domain.MediaTag;
 import com.hmoob.media.domain.bo.MediaVideoQuery;
+import com.hmoob.media.domain.bo.MediaVideoUpdateBo;
 import com.hmoob.media.domain.bo.MediaVideoUploadBo;
 import com.hmoob.media.domain.vo.MediaVideoAttachmentVo;
 import com.hmoob.media.domain.vo.MediaVideoDetailVo;
@@ -26,6 +28,7 @@ import com.hmoob.media.mapper.MediaVideoActionMapper;
 import com.hmoob.media.mapper.MediaVideoAttachmentMapper;
 import com.hmoob.media.mapper.MediaVideoMapper;
 import com.hmoob.media.mapper.MediaVideoTagMapper;
+import com.hmoob.media.mapper.MediaTagMapper;
 import com.hmoob.media.service.IMediaVideoAuthService;
 import com.hmoob.media.service.IMediaVideoService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,8 +45,10 @@ import java.io.OutputStream;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 
 /**
  * 视频管理服务实现
@@ -65,12 +70,23 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
      */
     private static final int ACTION_TYPE_PLAY = 3;
 
+    /**
+     * 标签类型: 分类
+     */
+    private static final int TAG_TYPE_CATEGORY = 1;
+
+    /**
+     * 标签类型: 方向
+     */
+    private static final int TAG_TYPE_DIRECTION = 2;
+
     private static final ConcurrentMap<Long, Object> USER_LOCK_MAP = new ConcurrentHashMap<>();
 
     private final MediaVideoMapper videoMapper;
     private final MediaVideoTagMapper videoTagMapper;
     private final MediaVideoActionMapper actionMapper;
     private final MediaVideoAttachmentMapper attachmentMapper;
+    private final MediaTagMapper tagMapper;
     private final IMediaVideoAuthService authService;
     private final TransactionTemplate transactionTemplate;
 
@@ -100,7 +116,7 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
             MediaVideo video = new MediaVideo();
             video.setTitle(bo.getTitle());
             video.setDescription(bo.getDescription());
-            video.setAuthorId(bo.getAuthorId());
+            video.setAuthorName(bo.getAuthorName());
             video.setVideoPath(videoPath);
             video.setThumbnail(thumbnailPath);
             video.setFileSize(file.getSize());
@@ -152,14 +168,40 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
         List<Long> authorizedIds = authService.getAuthorizedVideoIds(userId, deptId);
 
         LambdaQueryWrapper<MediaVideo> wrapper = new LambdaQueryWrapper<>();
+        // 关键词搜索
         if (StrUtil.isNotBlank(query.getKeyword())) {
             wrapper.and(w -> w.like(MediaVideo::getTitle, query.getKeyword()));
         }
+        // 作者筛选
+        if (StrUtil.isNotBlank(query.getAuthorName())) {
+            wrapper.like(MediaVideo::getAuthorName, query.getAuthorName());
+        }
+        // 分类 + 方向筛选（均通过 media_video_tag 关联表）
+        List<Long> tagIds = new java.util.ArrayList<>();
+        if (CollUtil.isNotEmpty(query.getCategoryIds())) {
+            tagIds.addAll(query.getCategoryIds());
+        }
+        if (CollUtil.isNotEmpty(query.getDirectionIds())) {
+            tagIds.addAll(query.getDirectionIds());
+        }
+        if (CollUtil.isNotEmpty(tagIds)) {
+            List<Long> tagVideoIds = videoTagMapper.selectList(
+                new LambdaQueryWrapper<MediaVideoTag>().in(MediaVideoTag::getTagId, tagIds))
+                .stream().map(MediaVideoTag::getVideoId).distinct().toList();
+            if (CollUtil.isNotEmpty(tagVideoIds)) {
+                wrapper.in(MediaVideo::getVideoId, tagVideoIds);
+            } else {
+                // 没有匹配的视频，直接返回空
+                return TableDataInfo.build(new Page<>());
+            }
+        }
+        // 排序
         if ("hottest".equals(query.getSort())) {
             wrapper.orderByDesc(MediaVideo::getLikeCount);
         } else {
             wrapper.orderByDesc(MediaVideo::getCreateTime);
         }
+        // 权限过滤：公开 或 已授权
         wrapper.and(w -> {
             w.eq(MediaVideo::getAuthType, 0);
             if (CollUtil.isNotEmpty(authorizedIds)) {
@@ -168,6 +210,22 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
         });
 
         Page<MediaVideoVo> page = videoMapper.selectVoPage(query.build(), wrapper);
+
+        // 批量查询当前用户对本页视频的点赞状态，避免N+1
+        List<MediaVideoVo> records = page.getRecords();
+        if (CollUtil.isNotEmpty(records)) {
+            List<Long> videoIds = records.stream().map(MediaVideoVo::getVideoId).toList();
+            Set<Long> likedVideoIds = actionMapper.selectList(new LambdaQueryWrapper<MediaVideoAction>()
+                .select(MediaVideoAction::getVideoId)
+                .eq(MediaVideoAction::getUserId, userId)
+                .eq(MediaVideoAction::getActionType, ACTION_TYPE_LIKE)
+                .in(MediaVideoAction::getVideoId, videoIds))
+                .stream().map(MediaVideoAction::getVideoId).collect(Collectors.toSet());
+            for (MediaVideoVo record : records) {
+                record.setHasLiked(likedVideoIds.contains(record.getVideoId()));
+            }
+        }
+
         return TableDataInfo.build(page);
     }
 
@@ -189,7 +247,7 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
         detail.setVideoId(video.getVideoId());
         detail.setTitle(video.getTitle());
         detail.setDescription(video.getDescription());
-        detail.setAuthorId(video.getAuthorId());
+        detail.setAuthorName(video.getAuthorName());
         detail.setFileType(video.getFileType());
         detail.setFileSize(video.getFileSize());
         detail.setDuration(video.getDuration());
@@ -198,7 +256,7 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
         detail.setAuthType(video.getAuthType());
         detail.setCreateTime(video.getCreateTime());
         detail.setUpdateTime(video.getUpdateTime());
-        detail.setIsAuthor(Objects.equals(video.getAuthorId(), LoginHelper.getUserId()));
+        detail.setIsAuthor(Objects.equals(video.getCreateBy(), LoginHelper.getUserId()));
 
         // 构建缩略图URL
         try {
@@ -219,6 +277,25 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
         List<MediaVideoAttachment> attachments = attachmentMapper.selectList(
             new LambdaQueryWrapper<MediaVideoAttachment>().eq(MediaVideoAttachment::getVideoId, videoId));
         detail.setAttachments(MapstructUtils.convert(attachments, MediaVideoAttachmentVo.class));
+
+        // 查询分类和方向标签ID
+        List<MediaVideoTag> videoTags = videoTagMapper.selectList(
+            new LambdaQueryWrapper<MediaVideoTag>().eq(MediaVideoTag::getVideoId, videoId));
+        if (CollUtil.isNotEmpty(videoTags)) {
+            List<Long> tagIds = videoTags.stream().map(MediaVideoTag::getTagId).toList();
+            List<MediaTag> tags = tagMapper.selectBatchIds(tagIds);
+            List<Long> categoryIds = tags.stream()
+                .filter(t -> TAG_TYPE_CATEGORY == t.getTagType())
+                .map(MediaTag::getTagId)
+                .toList();
+            List<Long> directionIds = tags.stream()
+                .filter(t -> TAG_TYPE_DIRECTION == t.getTagType())
+                .map(MediaTag::getTagId)
+                .toList();
+            detail.setCategoryIds(categoryIds);
+            detail.setDirectionIds(directionIds);
+        }
+
         return detail;
     }
 
@@ -245,6 +322,60 @@ public class MediaVideoServiceImpl implements IMediaVideoService {
                 .eq(MediaVideoAction::getVideoId, videoId));
             // 删除视频
             return videoMapper.deleteById(videoId);
+        });
+    }
+
+    // ==================== 更新 ====================
+
+    /**
+     * 更新视频信息
+     *
+     * @param videoId 视频ID
+     * @param bo      更新参数
+     */
+    @Override
+    public void updateVideo(Long videoId, MediaVideoUpdateBo bo) {
+        MediaVideo video = videoMapper.selectById(videoId);
+        if (video == null) {
+            throw new ServiceException("视频不存在");
+        }
+        transactionTemplate.executeWithoutResult(status -> {
+            // 更新基本信息
+            LambdaUpdateWrapper<MediaVideo> updateWrapper = new LambdaUpdateWrapper<MediaVideo>()
+                .eq(MediaVideo::getVideoId, videoId);
+            if (StrUtil.isNotBlank(bo.getTitle())) {
+                updateWrapper.set(MediaVideo::getTitle, bo.getTitle());
+            }
+            if (bo.getDescription() != null) {
+                updateWrapper.set(MediaVideo::getDescription, bo.getDescription());
+            }
+            if (StrUtil.isNotBlank(bo.getThumbnail())) {
+                updateWrapper.set(MediaVideo::getThumbnail, bo.getThumbnail());
+            }
+            if (StrUtil.isNotBlank(bo.getAuthorName())) {
+                updateWrapper.set(MediaVideo::getAuthorName, bo.getAuthorName());
+            }
+            videoMapper.update(null, updateWrapper);
+
+            // 更新标签关联：先删除旧的，再插入新的
+            videoTagMapper.delete(new LambdaQueryWrapper<MediaVideoTag>()
+                .eq(MediaVideoTag::getVideoId, videoId));
+            if (CollUtil.isNotEmpty(bo.getCategoryIds())) {
+                for (Long categoryId : bo.getCategoryIds()) {
+                    MediaVideoTag vt = new MediaVideoTag();
+                    vt.setVideoId(videoId);
+                    vt.setTagId(categoryId);
+                    videoTagMapper.insert(vt);
+                }
+            }
+            if (CollUtil.isNotEmpty(bo.getDirectionIds())) {
+                for (Long directionId : bo.getDirectionIds()) {
+                    MediaVideoTag vt = new MediaVideoTag();
+                    vt.setVideoId(videoId);
+                    vt.setTagId(directionId);
+                    videoTagMapper.insert(vt);
+                }
+            }
         });
     }
 

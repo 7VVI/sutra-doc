@@ -3,6 +3,7 @@ package com.hmoob.media.service;
 import com.hmoob.common.mybatis.core.page.PageQuery;
 import com.hmoob.common.mybatis.core.page.TableDataInfo;
 import com.hmoob.media.domain.bo.MediaVideoQuery;
+import com.hmoob.media.domain.bo.MediaVideoUpdateBo;
 import com.hmoob.media.domain.bo.MediaVideoUploadBo;
 import com.hmoob.media.domain.vo.MediaVideoDetailVo;
 import com.hmoob.media.domain.vo.MediaVideoVo;
@@ -50,6 +51,14 @@ public interface IMediaVideoService {
      * @return 影响行数
      */
     int deleteVideo(Long videoId);
+
+    /**
+     * 更新视频信息
+     *
+     * @param videoId 视频ID
+     * @param bo      更新参数
+     */
+    void updateVideo(Long videoId, MediaVideoUpdateBo bo);
 
     /**
      * Range 流式播放视频

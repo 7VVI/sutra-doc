@@ -93,6 +93,11 @@ public class KbFolderVo implements Serializable {
     private Date createTime;
 
     /**
+     * 是否有子节点
+     */
+    private Boolean hasChildren;
+
+    /**
      * 子目录列表
      */
     private List<KbFolderVo> children = new ArrayList<>();
