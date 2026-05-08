@@ -28,6 +28,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -128,6 +129,18 @@ public class FileChangeHandlerService {
         } catch (Exception e) {
             log.warn("从 ES 删除文档失败: docId={}", docId, e);
         }
+    }
+
+    /**
+     * 根据文件ID查找文档
+     *
+     * @param fileId 文件ID
+     * @return 文档实体
+     */
+    private KbDoc findDocByFileId(Long fileId) {
+        LambdaQueryWrapper<KbDoc> query = Wrappers.lambdaQuery();
+        query.eq(KbDoc::getFileId, fileId);
+        return docMapper.selectOne(query);
     }
 
     // ========== 文件变化处理内部类 ==========
@@ -421,15 +434,6 @@ public class FileChangeHandlerService {
         }
 
         /**
-         * 根据文件ID查找文档
-         */
-        private KbDoc findDocByFileId(Long fileId) {
-            LambdaQueryWrapper<KbDoc> query = Wrappers.lambdaQuery();
-            query.eq(KbDoc::getFileId, fileId);
-            return docMapper.selectOne(query);
-        }
-
-        /**
          * 删除文件和文档记录
          */
         private void deleteFileAndDoc(KbFile existFile, KbFileChangeLog changeLog) {
@@ -516,6 +520,7 @@ public class FileChangeHandlerService {
                 case CREATED -> handleDirectoryCreated(dirPath, dirName, config, changeLog);
                 case MODIFIED -> handleDirectoryModified(dirPath, dirName, config, changeLog);
                 case DELETED -> handleDirectoryDeleted(dirPath, config, changeLog);
+                case RENAMED -> handleDirectoryRenamed(dirPath, event.oldPath(), config, changeLog);
             }
         }
 
@@ -532,6 +537,144 @@ public class FileChangeHandlerService {
                 log.error("目录自动创建失败: {}", dirPath, e);
                 changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.FAILED, "目录创建失败: " + e.getMessage());
             }
+        }
+
+        /**
+         * 处理目录重命名
+         * 更新目录本身及所有子目录、文件的路径信息
+         *
+         * @param newDirPath  新目录路径
+         * @param oldDirPath  旧目录路径
+         * @param config      监控配置
+         * @param changeLog   变化日志
+         */
+        private void handleDirectoryRenamed(Path newDirPath, String oldDirPath, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+            String oldPathStr = pathHelper.normalizePath(Path.of(oldDirPath));
+            String newPathStr = pathHelper.normalizePath(newDirPath);
+            String newDirName = pathHelper.getDirName(newDirPath);
+
+            log.info("处理目录重命名: {} -> {}", oldDirPath, newPathStr);
+
+            // 通过旧路径查找目录记录
+            Long kbParentFolderId = pathHelper.getKbParentFolderId(config);
+            Path oldRelativePath = pathHelper.getRelativePath(Path.of(oldDirPath), config.getWatchPath());
+            KbFolder existFolder = findFolderByRelativePath(oldRelativePath, kbParentFolderId);
+
+            if (existFolder == null) {
+                log.info("旧目录未在文档库中，忽略重命名事件: {}", oldDirPath);
+                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.IGNORED, "旧目录不在文档库中");
+                return;
+            }
+
+            // 在事务中批量更新路径信息
+            transactionTemplate.executeWithoutResult(status -> {
+                // 1. 更新目录本身
+                updateFolderPath(existFolder, newDirName, oldPathStr, newPathStr);
+                changeLog.setFolderId(existFolder.getFolderId());
+
+                // 2. 更新所有子目录的 folder_path
+                updateChildFoldersPath(existFolder.getFolderId(), oldPathStr, newPathStr);
+
+                // 3. 更新所有文件的 physical_path
+                updateChildFilesPath(existFolder.getFolderId(), oldPathStr, newPathStr);
+
+                log.info("目录重命名处理完成: {} -> {}, 已更新子目录和文件路径", oldDirPath, newPathStr);
+            });
+        }
+
+        /**
+         * 更新目录本身的路径信息
+         */
+        private void updateFolderPath(KbFolder folder, String newDirName, String oldPath, String newPath) {
+            folder.setFolderName(newDirName);
+            // folder_path 是逻辑路径（如 /父目录/当前目录），需要根据新物理路径计算
+            // 这里简化处理：替换 folder_path 中的旧目录名
+            if (folder.getFolderPath() != null) {
+                String oldFolderName = Path.of(oldPath).getFileName().toString();
+                String newFolderPath = folder.getFolderPath().replace(oldFolderName, newDirName);
+                folder.setFolderPath(newFolderPath);
+            }
+            folderMapper.updateById(folder);
+        }
+
+        /**
+         * 更新所有子目录的 folder_path（批量路径前缀替换）
+         *
+         * @param parentFolderId 父目录ID
+         * @param oldPathPrefix  旧路径前缀
+         * @param newPathPrefix  新路径前缀
+         */
+        private void updateChildFoldersPath(Long parentFolderId, String oldPathPrefix, String newPathPrefix) {
+            // 查找所有子目录（folder_path 以旧路径开头）
+            LambdaQueryWrapper<KbFolder> query = Wrappers.lambdaQuery();
+            query.likeRight(KbFolder::getFolderPath, oldPathPrefix)
+                .ne(KbFolder::getFolderId, parentFolderId);
+            List<KbFolder> childFolders = folderMapper.selectList(query);
+
+            for (KbFolder child : childFolders) {
+                if (child.getFolderPath() != null) {
+                    String newFolderPath = child.getFolderPath().replace(oldPathPrefix, newPathPrefix);
+                    child.setFolderPath(newFolderPath);
+                    folderMapper.updateById(child);
+                    log.debug("更新子目录路径: folderId={}, newPath={}", child.getFolderId(), newFolderPath);
+                }
+            }
+
+            log.info("已更新 {} 个子目录的路径", childFolders.size());
+        }
+
+        /**
+         * 更新所有文件的 physical_path（批量路径前缀替换）
+         *
+         * @param parentFolderId 父目录ID
+         * @param oldPathPrefix  旧路径前缀
+         * @param newPathPrefix  新路径前缀
+         */
+        private void updateChildFilesPath(Long parentFolderId, String oldPathPrefix, String newPathPrefix) {
+            // 查找该目录及其所有子目录下的文档
+            List<Long> allFolderIds = collectAllFolderIds(parentFolderId);
+
+            // 查找所有文件（physical_path 以旧路径开头）
+            LambdaQueryWrapper<KbFile> query = Wrappers.lambdaQuery();
+            query.likeRight(KbFile::getPhysicalPath, oldPathPrefix);
+            List<KbFile> childFiles = fileMapper.selectList(query);
+
+            int updatedCount = 0;
+            for (KbFile file : childFiles) {
+                if (file.getPhysicalPath() != null) {
+                    String newPhysicalPath = file.getPhysicalPath().replace(oldPathPrefix, newPathPrefix);
+                    file.setPhysicalPath(newPhysicalPath);
+                    fileMapper.updateById(file);
+
+                    // 更新关联文档的名称（如果文件名变化）
+                    KbDoc doc = findDocByFileId(file.getFileId());
+                    if (doc != null) {
+                        String newFileName = Path.of(newPhysicalPath).getFileName().toString();
+                        doc.setDocName(newFileName);
+                        docMapper.updateById(doc);
+                    }
+
+                    updatedCount++;
+                    log.debug("更新文件路径: fileId={}, newPath={}", file.getFileId(), newPhysicalPath);
+                }
+            }
+
+            log.info("已更新 {} 个文件的路径", updatedCount);
+        }
+
+        /**
+         * 收集目录及其所有子目录的ID
+         */
+        private List<Long> collectAllFolderIds(Long folderId) {
+            List<Long> result = new ArrayList<>();
+            result.add(folderId);
+
+            List<KbFolder> children = findChildFolders(folderId);
+            for (KbFolder child : children) {
+                result.addAll(collectAllFolderIds(child.getFolderId()));
+            }
+
+            return result;
         }
 
         /**

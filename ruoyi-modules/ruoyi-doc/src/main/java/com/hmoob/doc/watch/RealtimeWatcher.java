@@ -204,13 +204,18 @@ public class RealtimeWatcher {
 
         log.debug("批量处理 {} 个事件", batchEvents.size());
 
-        // 1. 按文件路径分组，去除重复事件
+        // 1. 修正 DELETED 事件的 isDirectory 标志
+        // 当目录删除时，Files.isDirectory 返回 false（文件已不存在）
+        // 需要通过路径关系推断：如果某个路径是其他删除事件的父路径，则它是目录
+        inferDeletedDirectories(batchEvents);
+
+        // 2. 按文件路径分组，去除重复事件
         Map<String, List<PendingEvent>> eventsByPath = new LinkedHashMap<>();
         for (PendingEvent event : batchEvents) {
             eventsByPath.computeIfAbsent(event.path, k -> new ArrayList<>()).add(event);
         }
 
-        // 2. 分离文件和目录事件
+        // 3. 分离文件和目录事件
         List<PendingEvent> fileEvents = new ArrayList<>();
         List<PendingEvent> dirEvents = new ArrayList<>();
         for (PendingEvent event : batchEvents) {
@@ -221,7 +226,7 @@ public class RealtimeWatcher {
             }
         }
 
-        // 3. 收集被删除的目录路径（用于检测子文件是否被删除）
+        // 4. 收集被删除的目录路径（用于检测子文件是否被删除）
         Set<String> deletedDirs = new HashSet<>();
         for (PendingEvent dirEvent : dirEvents) {
             if (dirEvent.type == FileChangeTypeEnum.DELETED) {
@@ -229,13 +234,13 @@ public class RealtimeWatcher {
             }
         }
 
-        // 4. 检测文件事件合并（重命名、重复事件、目录删除导致的文件删除）
+        // 5. 检测文件事件合并（重命名、重复事件、目录删除导致的文件删除）
         List<MergedEvent> mergedFileEvents = mergeFileEvents(fileEvents, deletedDirs);
 
-        // 5. 处理目录事件（过滤掉目录本身的 MODIFIED 事件）
-        List<ChangeEvent> finalDirEvents = filterDirectoryEvents(dirEvents);
+        // 6. 处理目录事件（检测重命名、过滤掉目录本身的 MODIFIED 事件）
+        List<ChangeEvent> finalDirEvents = mergeDirectoryEvents(dirEvents);
 
-        // 6. 按路径排序发送事件（保证处理顺序）
+        // 7. 按路径排序发送事件（保证处理顺序）
         List<ChangeEvent> allEvents = new ArrayList<>();
 
         // 先添加目录事件（父目录删除应该在子文件删除之前）
@@ -253,9 +258,140 @@ public class RealtimeWatcher {
 
         // 发送事件
         for (ChangeEvent event : allEvents) {
-            log.debug("发送事件: type={}, path={}", event.type(), event.path());
+            log.debug("发送事件: type={}, path={}, oldPath={}", event.type(), event.path(), event.oldPath());
             handler.accept(event);
         }
+    }
+
+    /**
+     * 推断 DELETED 事件是否是目录删除
+     * 条件：如果某个 DELETED 路径是其他删除事件的父路径，则它是目录
+     */
+    private void inferDeletedDirectories(List<PendingEvent> batchEvents) {
+        // 收集所有 DELETED 事件路径
+        List<PendingEvent> deletedEvents = batchEvents.stream()
+            .filter(e -> e.type == FileChangeTypeEnum.DELETED)
+            .toList();
+
+        // 检查每个 DELETED 路径是否是其他删除事件的父路径
+        for (PendingEvent deleted : deletedEvents) {
+            if (deleted.isDirectory) {
+                continue; // 已经是目录，跳过
+            }
+
+            // 检查是否有其他删除事件的路径以当前路径为前缀
+            for (PendingEvent other : deletedEvents) {
+                if (other.path.equals(deleted.path)) {
+                    continue; // 同一路径，跳过
+                }
+
+                // 如果其他删除路径是当前路径的子路径，则当前路径是目录
+                if (other.path.startsWith(deleted.path + "\\") || other.path.startsWith(deleted.path + "/")) {
+                    deleted.isDirectory = true;
+                    log.debug("推断目录删除: {} (因为有子路径删除: {})", deleted.path, other.path);
+                    break;
+                }
+            }
+
+            // 检查是否有 CREATED 事件与 DELETED 事件路径对应（目录重命名场景）
+            // 如果存在同层级的 CREATED 事件，也可能是目录重命名
+            for (PendingEvent created : batchEvents.stream().filter(e -> e.type == FileChangeTypeEnum.CREATED && e.isDirectory).toList()) {
+                // 同一父目录下，旧名删除、新名创建
+                Path deletedPath = Path.of(deleted.path);
+                Path createdPath = Path.of(created.path);
+                if (deletedPath.getParent().equals(createdPath.getParent())) {
+                    deleted.isDirectory = true;
+                    log.debug("推断目录删除（重命名场景）: {} -> {}", deleted.path, created.path);
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * 合并目录事件
+     * 检测目录重命名（DELETED + CREATED 组合）
+     */
+    private List<ChangeEvent> mergeDirectoryEvents(List<PendingEvent> dirEvents) {
+        List<ChangeEvent> mergedEvents = new ArrayList<>();
+
+        // 分离 DELETED、CREATED、MODIFIED 事件
+        List<PendingEvent> deletedEvents = new ArrayList<>();
+        List<PendingEvent> createdEvents = new ArrayList<>();
+        List<PendingEvent> modifiedEvents = new ArrayList<>();
+
+        for (PendingEvent event : dirEvents) {
+            switch (event.type) {
+                case DELETED -> deletedEvents.add(event);
+                case CREATED -> createdEvents.add(event);
+                case MODIFIED -> modifiedEvents.add(event);
+                default -> log.warn("未知的目录事件类型: {}", event.type);
+            }
+        }
+
+        // 1. 检测目录重命名（DELETED + CREATED 组合）
+        Set<PendingEvent> matchedDeleted = new HashSet<>();
+        Set<PendingEvent> matchedCreated = new HashSet<>();
+
+        for (PendingEvent deleted : deletedEvents) {
+            for (PendingEvent created : createdEvents) {
+                if (matchedCreated.contains(created)) {
+                    continue;
+                }
+
+                // 检查是否可能是目录重命名
+                if (isLikelyDirRename(deleted.path, created.path)) {
+                    matchedDeleted.add(deleted);
+                    matchedCreated.add(created);
+                    mergedEvents.add(new ChangeEvent(FileChangeTypeEnum.RENAMED, created.path, true, deleted.path));
+                    log.info("检测到目录重命名: {} -> {}", deleted.path, created.path);
+                    break;
+                }
+            }
+        }
+
+        // 2. 未匹配的 DELETED 事件
+        for (PendingEvent deleted : deletedEvents) {
+            if (!matchedDeleted.contains(deleted)) {
+                mergedEvents.add(new ChangeEvent(FileChangeTypeEnum.DELETED, deleted.path, true));
+            }
+        }
+
+        // 3. 未匹配的 CREATED 事件
+        for (PendingEvent created : createdEvents) {
+            if (!matchedCreated.contains(created)) {
+                mergedEvents.add(new ChangeEvent(FileChangeTypeEnum.CREATED, created.path, true));
+            }
+        }
+
+        // 4. MODIFIED 事件过滤（子文件变化导致的目录MODIFIED，忽略）
+        // 目录 MODIFIED 通常是因为子文件变化，不是目录本身的变化
+        log.debug("忽略目录 MODIFIED 事件，共 {} 个", modifiedEvents.size());
+
+        return mergedEvents;
+    }
+
+    /**
+     * 判断是否可能是目录重命名
+     * 条件：旧目录不存在，新目录存在
+     */
+    private boolean isLikelyDirRename(String oldPath, String newPath) {
+        Path oldDir = Path.of(oldPath);
+        Path newDir = Path.of(newPath);
+
+        // 新目录必须存在
+        if (!Files.isDirectory(newDir)) {
+            return false;
+        }
+
+        // 旧目录必须不存在
+        if (Files.exists(oldDir)) {
+            return false;
+        }
+
+        // 在同一批次事件中，旧目录删除、新目录创建，认为是重命名
+        log.debug("目录重命名检测：oldPath不存在，newPath存在");
+        return true;
     }
 
     /**
@@ -415,42 +551,6 @@ public class RealtimeWatcher {
     }
 
     /**
-     * 过滤目录事件（去除目录本身的 MODIFIED 事件）
-     */
-    private List<ChangeEvent> filterDirectoryEvents(List<PendingEvent> dirEvents) {
-        List<ChangeEvent> result = new ArrayList<>();
-
-        // 按路径分组
-        Map<String, List<PendingEvent>> eventsByDir = new LinkedHashMap<>();
-        for (PendingEvent event : dirEvents) {
-            eventsByDir.computeIfAbsent(event.path, k -> new ArrayList<>()).add(event);
-        }
-
-        for (Map.Entry<String, List<PendingEvent>> entry : eventsByDir.entrySet()) {
-            String dirPath = entry.getKey();
-            List<PendingEvent> events = entry.getValue();
-
-            // 检查是否有 CREATED 或 DELETED 事件
-            boolean hasCreateOrDelete = events.stream()
-                .anyMatch(e -> e.type == FileChangeTypeEnum.CREATED || e.type == FileChangeTypeEnum.DELETED);
-
-            if (hasCreateOrDelete) {
-                // 有 CREATED 或 DELETED，保留这些事件，过滤 MODIFIED
-                for (PendingEvent event : events) {
-                    if (event.type != FileChangeTypeEnum.MODIFIED) {
-                        result.add(new ChangeEvent(event.type, event.path, true));
-                    }
-                }
-            } else {
-                // 只有 MODIFIED 事件，可能是子文件变化，忽略
-                log.debug("忽略目录 MODIFIED 事件: {}", dirPath);
-            }
-        }
-
-        return result;
-    }
-
-    /**
      * 按优先级排序事件
      * DELETED 事件优先处理（确保删除顺序正确：父目录先删除，子文件后处理）
      */
@@ -494,13 +594,18 @@ public class RealtimeWatcher {
     // ========== 内部数据结构 ==========
 
     /**
-     * 待处理事件
+     * 待处理事件（使用普通类以支持字段修改）
      */
-    private record PendingEvent(
-        FileChangeTypeEnum type,
-        String path,
-        boolean isDirectory
-    ) {
+    private static class PendingEvent {
+        FileChangeTypeEnum type;
+        String path;
+        boolean isDirectory;
+
+        PendingEvent(FileChangeTypeEnum type, String path, boolean isDirectory) {
+            this.type = type;
+            this.path = path;
+            this.isDirectory = isDirectory;
+        }
     }
 
     /**
