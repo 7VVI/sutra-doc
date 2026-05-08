@@ -21,7 +21,6 @@ import com.hmoob.doc.utils.FileUtil;
 import com.hmoob.doc.watch.ChangeEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -37,12 +36,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 文件变化处理服务
  * 负责将监控到的文件变化同步到数据库和ES
- * <p>
- * 内部职责划分：
- * - FileHandler: 文件变化处理
- * - DirectoryHandler: 目录变化处理
- * - ChangeLogHelper: 变化日志记录
- * - PathHelper: 路径处理工具
+ *
+ * 核心特性：
+ * 1. 目录删除/修改时，只触发目录事件，自动处理子项（不触发子项事件）
+ * 2. 文件增删改重命名都需要触发事件
+ * 3. 所有事件按顺序处理（由 KbFileWatchService 保证）
  *
  * @author hmoob
  */
@@ -66,22 +64,20 @@ public class FileChangeHandlerService {
     private final FileHandler fileHandler = new FileHandler();
     /** 目录变化处理器 */
     private final DirectoryHandler directoryHandler = new DirectoryHandler();
-    /** 变化日志助手 */
-    private final ChangeLogHelper changeLogHelper = new ChangeLogHelper();
     /** 路径处理助手 */
     private final PathHelper pathHelper = new PathHelper();
 
     // ========== 核心入口方法 ==========
 
     /**
-     * 异步处理文件变化事件
-     * 注意：异步线程中无Sa-Token上下文，需忽略数据权限检查
+     * 处理文件变化事件（同步处理，由 KbFileWatchService 调度）
+     * 注意：数据权限检查已在外层处理
      *
      * @param event  变化事件
      * @param config 监控配置
+     * @return 处理结果（包含关联的 docId 和 folderId）
      */
-    @Async
-    public void handleChangeEvent(ChangeEvent event, KbFileWatchConfig config) {
+    public ChangeProcessResult handleChangeEvent(ChangeEvent event, KbFileWatchConfig config) {
         log.info("处理文件变化事件: type={}, path={}, isDir={}", event.type(), event.path(), event.isDirectory());
 
         // 忽略数据权限（异步线程无登录上下文）
@@ -89,31 +85,42 @@ public class FileChangeHandlerService {
             com.baomidou.mybatisplus.core.plugins.IgnoreStrategy.builder().dataPermission(true).build()
         );
 
-        KbFileChangeLog changeLog = null;
+        ChangeProcessResult result = new ChangeProcessResult();
         try {
-            // 1. 记录变化日志
-            changeLog = changeLogHelper.buildChangeLog(event, config);
-            changeLogMapper.insert(changeLog);
-
-            // 2. 处理文件/目录变化
+            // 处理文件/目录变化
             if (event.isDirectory()) {
-                directoryHandler.handleDirectoryChange(event, config, changeLog);
+                result = directoryHandler.handleDirectoryChange(event, config);
             } else {
-                fileHandler.handleFileChange(event, config, changeLog);
+                result = fileHandler.handleFileChange(event, config);
             }
 
-            // 3. 更新处理状态为成功
-            changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.SUCCESS, "处理成功");
-
+        } catch (IOException e) {
+            log.error("处理文件变化事件失败(IOException): path={}", event.path(), e);
+            throw new RuntimeException("处理文件变化事件失败", e);
         } catch (Exception e) {
             log.error("处理文件变化事件失败: path={}", event.path(), e);
-            if (changeLog != null) {
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.FAILED, e.getMessage());
-            }
+            throw e;
         } finally {
             // 清除忽略策略
             InterceptorIgnoreHelper.clearIgnoreStrategy();
         }
+        return result;
+    }
+
+    /**
+     * 处理结果对象
+     */
+    public static class ChangeProcessResult {
+        private Long docId;
+        private Long folderId;
+        private String message;
+
+        public Long getDocId() { return docId; }
+        public void setDocId(Long docId) { this.docId = docId; }
+        public Long getFolderId() { return folderId; }
+        public void setFolderId(Long folderId) { this.folderId = folderId; }
+        public String getMessage() { return message; }
+        public void setMessage(String message) { this.message = message; }
     }
 
     // ========== 公共辅助方法（供内部类共享使用） ==========
@@ -147,7 +154,7 @@ public class FileChangeHandlerService {
 
     /**
      * 文件变化处理器
-     * 负责处理文件的创建、修改、删除事件
+     * 负责处理文件的创建、修改、删除、重命名事件
      */
     private class FileHandler {
 
@@ -156,17 +163,19 @@ public class FileChangeHandlerService {
          *
          * @param event     变化事件
          * @param config    监控配置
-         * @param changeLog 变化日志
+         * @return 处理结果（包含docId）
          */
-        public void handleFileChange(ChangeEvent event, KbFileWatchConfig config, KbFileChangeLog changeLog) throws IOException {
+        public ChangeProcessResult handleFileChange(ChangeEvent event, KbFileWatchConfig config) throws IOException {
             Path filePath = Path.of(event.path());
+            ChangeProcessResult result = new ChangeProcessResult();
 
             switch (event.type()) {
-                case CREATED -> handleFileCreated(filePath, config, changeLog);
-                case MODIFIED -> handleFileModified(filePath, config, changeLog);
-                case DELETED -> handleFileDeleted(filePath, config, changeLog);
-                case RENAMED -> handleFileRenamed(filePath, event.oldPath(), config, changeLog);
+                case CREATED -> result = handleFileCreated(filePath, config);
+                case MODIFIED -> result = handleFileModified(filePath, config);
+                case DELETED -> result = handleFileDeleted(filePath, config);
+                case RENAMED -> result = handleFileRenamed(filePath, event.oldPath(), config);
             }
+            return result;
         }
 
         /**
@@ -174,13 +183,15 @@ public class FileChangeHandlerService {
          *
          * @param filePath  文件路径
          * @param config    监控配置
-         * @param changeLog 变化日志
+         * @return 处理结果
          */
-        private void handleFileCreated(Path filePath, KbFileWatchConfig config, KbFileChangeLog changeLog) throws IOException {
+        private ChangeProcessResult handleFileCreated(Path filePath, KbFileWatchConfig config) throws IOException {
+            ChangeProcessResult result = new ChangeProcessResult();
             // 检查是否启用自动添加
             if (!isAutoAddEnabled(config)) {
                 log.info("自动添加文档未启用，跳过: {}", filePath);
-                return;
+                result.setMessage("自动添加文档未启用");
+                return result;
             }
 
             String fileName = filePath.getFileName().toString();
@@ -189,23 +200,49 @@ public class FileChangeHandlerService {
             // 检查文件类型是否支持
             if (!FileUtil.isFileTypeSupported(fileType)) {
                 log.info("不支持的文件类型，跳过: {} ({})", fileName, fileType);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.IGNORED, "不支持的文件类型: " + fileType);
-                return;
+                result.setMessage("不支持的文件类型: " + fileType);
+                return result;
             }
 
             // 检查文件是否已存在（去重）
-            String sha256 = DigestUtil.sha256Hex(Files.newInputStream(filePath));
+            String sha256;
+            try (java.io.InputStream is = Files.newInputStream(filePath)) {
+                sha256 = DigestUtil.sha256Hex(is);
+            }
             KbFile existFile = findFileBySha256(sha256);
             if (existFile != null) {
                 log.info("文件已存在(SHA256相同), 跳过新增: {}", fileName);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.IGNORED, "文件已存在(hash相同)");
-                return;
+                result.setMessage("文件已存在(hash相同)");
+                return result;
             }
 
+            // 根据文件路径查找或创建对应的目录
+            Long folderId = findOrCreateFolderForFile(filePath, config);
+
             // 在事务中创建文件和文档记录
-            transactionTemplate.executeWithoutResult(status -> {
-                createFileAndDoc(filePath, config, changeLog, sha256, fileName, fileType);
+            Long docId = transactionTemplate.execute(status -> {
+                return createFileAndDoc(filePath, config, sha256, fileName, fileType, folderId);
             });
+            result.setDocId(docId);
+            result.setFolderId(folderId);
+            return result;
+        }
+
+        /**
+         * 根据文件路径查找或创建对应的目录
+         *
+         * @param filePath 文件路径
+         * @param config   监控配置
+         * @return 目录ID
+         */
+        private Long findOrCreateFolderForFile(Path filePath, KbFileWatchConfig config) {
+            Path parentDir = filePath.getParent();
+            if (parentDir == null) {
+                return config.getFolderId() != null ? config.getFolderId() : 0L;
+            }
+
+            // 使用 DirectoryHandler 的方法创建或查找目录
+            return directoryHandler.createOrUpdateFolder(parentDir, config);
         }
 
         /**
@@ -213,23 +250,24 @@ public class FileChangeHandlerService {
          *
          * @param filePath  文件路径
          * @param config    监控配置
-         * @param changeLog 变化日志
+         * @return 处理结果
          */
-        private void handleFileModified(Path filePath, KbFileWatchConfig config, KbFileChangeLog changeLog) throws IOException {
+        private ChangeProcessResult handleFileModified(Path filePath, KbFileWatchConfig config) throws IOException {
+            ChangeProcessResult result = new ChangeProcessResult();
             String filePathStr = pathHelper.normalizePath(filePath);
 
             // 通过物理路径查找已有文件记录
             KbFile existFile = findFileByPhysicalPath(filePathStr);
             if (existFile == null) {
                 log.info("文件未在文档库中，按新增处理: {}", filePath);
-                handleFileCreated(filePath, config, changeLog);
-                return;
+                return handleFileCreated(filePath, config);
             }
 
             // 计算新hash
-            String newSha256 = DigestUtil.sha256Hex(Files.newInputStream(filePath));
-            changeLog.setOldHash(existFile.getSha256());
-            changeLog.setContentHash(newSha256);
+            String newSha256;
+            try (java.io.InputStream is = Files.newInputStream(filePath)) {
+                newSha256 = DigestUtil.sha256Hex(is);
+            }
 
             // 更新文件信息
             existFile.setSha256(newSha256);
@@ -237,10 +275,12 @@ public class FileChangeHandlerService {
             fileMapper.updateById(existFile);
 
             // 查找关联文档并更新
-            updateDocForModifiedFile(existFile, config, changeLog);
-
-            changeLogMapper.updateById(changeLog);
+            KbDoc doc = updateDocForModifiedFile(existFile, config);
+            if (doc != null) {
+                result.setDocId(doc.getDocId());
+            }
             log.info("文件修改处理完成: {}", filePath);
+            return result;
         }
 
         /**
@@ -249,9 +289,10 @@ public class FileChangeHandlerService {
          * @param newFilePath  新文件路径
          * @param oldFilePath  旧文件路径
          * @param config       监控配置
-         * @param changeLog    变化日志
+         * @return 处理结果
          */
-        private void handleFileRenamed(Path newFilePath, String oldFilePath, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+        private ChangeProcessResult handleFileRenamed(Path newFilePath, String oldFilePath, KbFileWatchConfig config) {
+            ChangeProcessResult result = new ChangeProcessResult();
             String oldPathStr = pathHelper.normalizePath(Path.of(oldFilePath));
             String newPathStr = pathHelper.normalizePath(newFilePath);
             String newFileName = newFilePath.getFileName().toString();
@@ -262,8 +303,8 @@ public class FileChangeHandlerService {
             KbFile existFile = findFileByPhysicalPath(oldPathStr);
             if (existFile == null) {
                 log.info("旧文件未在文档库中，忽略重命名事件: {}", oldFilePath);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.IGNORED, "旧文件不在文档库中");
-                return;
+                result.setMessage("旧文件不在文档库中");
+                return result;
             }
 
             // 更新文件记录
@@ -277,48 +318,55 @@ public class FileChangeHandlerService {
                 doc.setDocName(newFileName);
                 doc.setDocTitle(FileUtil.extractFileTitle(newFileName));
                 docMapper.updateById(doc);
-                changeLog.setDocId(doc.getDocId());
 
                 // 更新ES索引中的文档名称
                 if (isAutoIndexEnabled(config)) {
                     safeUpdateEsIndex(doc.getDocId());
                 }
+                result.setDocId(doc.getDocId());
             }
 
-            changeLogMapper.updateById(changeLog);
             log.info("文件重命名处理完成: {} -> {} (docId={})", oldFilePath, newPathStr, doc != null ? doc.getDocId() : null);
+            return result;
         }
 
         /**
          * 处理文件删除：更新文档状态和ES
-         * 注意：重命名事件已在Watcher层面合并，此方法处理真正的删除操作
          *
          * @param filePath  文件路径
          * @param config    监控配置
-         * @param changeLog 变化日志
+         * @return 处理结果
          */
-        private void handleFileDeleted(Path filePath, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+        private ChangeProcessResult handleFileDeleted(Path filePath, KbFileWatchConfig config) {
+            ChangeProcessResult result = new ChangeProcessResult();
             // 检查文件是否真的不存在了
             if (Files.exists(filePath)) {
                 log.info("文件仍然存在，忽略删除事件: {}", filePath);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.IGNORED, "文件仍然存在");
-                return;
+                result.setMessage("文件仍然存在");
+                return result;
             }
 
             String filePathStr = pathHelper.normalizePath(filePath);
             KbFile existFile = findFileByPhysicalPath(filePathStr);
             if (existFile == null) {
                 log.info("文件未在文档库中，忽略删除事件: {}", filePath);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.IGNORED, "文件不在文档库中");
-                return;
+                result.setMessage("文件不在文档库中");
+                return result;
+            }
+
+            // 查找关联文档获取docId（用于日志记录）
+            KbDoc doc = findDocByFileId(existFile.getFileId());
+            if (doc != null) {
+                result.setDocId(doc.getDocId());
             }
 
             // 在事务中删除文件和文档记录
             transactionTemplate.executeWithoutResult(status -> {
-                deleteFileAndDoc(existFile, changeLog);
+                deleteFileAndDoc(existFile);
             });
 
             log.info("文件删除处理完成: {}", filePath);
+            return result;
         }
 
         // ========== 文件处理辅助方法 ==========
@@ -350,28 +398,26 @@ public class FileChangeHandlerService {
 
         /**
          * 创建文件和文档记录
+         * @param folderId 目录ID（根据文件路径查找的实际目录）
+         * @return 文档ID
          */
-        private void createFileAndDoc(Path filePath, KbFileWatchConfig config, KbFileChangeLog changeLog,
-                                        String sha256, String fileName, String fileType) {
+        private Long createFileAndDoc(Path filePath, KbFileWatchConfig config, String sha256, String fileName, String fileType, Long folderId) {
             try {
                 // 保存文件记录
                 KbFile kbFile = buildKbFile(filePath, sha256, fileName, fileType);
                 fileMapper.insert(kbFile);
 
-                // 创建文档记录
-                KbDoc doc = buildKbDoc(kbFile, config, fileName, fileType);
+                // 创建文档记录（使用实际的目录ID）
+                KbDoc doc = buildKbDoc(kbFile, folderId, fileName, fileType);
                 docMapper.insert(doc);
-
-                // 更新变化记录的关联文档ID
-                changeLog.setDocId(doc.getDocId());
-                changeLogMapper.updateById(changeLog);
 
                 // 异步解析并索引到ES
                 if (isAutoIndexEnabled(config)) {
                     safeAsyncProcessDoc(doc.getDocId());
                 }
 
-                log.info("文件自动添加到文档库成功: {} -> docId={}", fileName, doc.getDocId());
+                log.info("文件自动添加到文档库成功: {} -> docId={}, folderId={}", fileName, doc.getDocId(), folderId);
+                return doc.getDocId();
             } catch (IOException e) {
                 throw new RuntimeException("创建文件记录失败: " + fileName, e);
             }
@@ -395,10 +441,11 @@ public class FileChangeHandlerService {
 
         /**
          * 构建文档实体
+         * @param folderId 目录ID（根据文件路径计算的实际目录）
          */
-        private KbDoc buildKbDoc(KbFile kbFile, KbFileWatchConfig config, String fileName, String fileType) {
+        private KbDoc buildKbDoc(KbFile kbFile, Long folderId, String fileName, String fileType) {
             KbDoc doc = new KbDoc();
-            doc.setFolderId(config.getFolderId() != null ? config.getFolderId() : 0L);
+            doc.setFolderId(folderId != null ? folderId : 0L);
             doc.setFileId(kbFile.getFileId());
             doc.setDocName(fileName);
             doc.setDocTitle(FileUtil.extractFileTitle(fileName));
@@ -416,31 +463,30 @@ public class FileChangeHandlerService {
 
         /**
          * 更新修改文件的关联文档
+         * @return 更新后的文档
          */
-        private void updateDocForModifiedFile(KbFile existFile, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+        private KbDoc updateDocForModifiedFile(KbFile existFile, KbFileWatchConfig config) {
             KbDoc doc = findDocByFileId(existFile.getFileId());
             if (doc == null) {
-                return;
+                return null;
             }
 
             doc.setFileSize(existFile.getFileSize());
             docMapper.updateById(doc);
-            changeLog.setDocId(doc.getDocId());
 
             // 重新解析并索引到ES
             if (isAutoIndexEnabled(config)) {
                 safeParseAndIndexDoc(doc.getDocId());
             }
+            return doc;
         }
 
         /**
          * 删除文件和文档记录
          */
-        private void deleteFileAndDoc(KbFile existFile, KbFileChangeLog changeLog) {
+        private void deleteFileAndDoc(KbFile existFile) {
             KbDoc doc = findDocByFileId(existFile.getFileId());
             if (doc != null) {
-                changeLog.setDocId(doc.getDocId());
-
                 // 从 ES 中删除
                 safeDeleteFromEs(doc.getDocId());
 
@@ -450,7 +496,6 @@ public class FileChangeHandlerService {
 
             // 删除文件记录
             fileMapper.deleteById(existFile.getFileId());
-            changeLogMapper.updateById(changeLog);
         }
 
         /**
@@ -498,7 +543,12 @@ public class FileChangeHandlerService {
 
     /**
      * 目录变化处理器
-     * 负责处理目录的创建、修改、删除事件
+     * 负责处理目录的创建、修改、删除、重命名事件
+     *
+     * 重要特性：
+     * 1. 目录删除时，自动递归删除子目录和子文件（不触发子项事件）
+     * 2. 目录重命名时，自动更新子目录和子文件的路径（不触发子项事件）
+     * 3. 目录修改时，只更新目录信息
      */
     private class DirectoryHandler {
 
@@ -510,47 +560,53 @@ public class FileChangeHandlerService {
          *
          * @param event     变化事件
          * @param config    监控配置
-         * @param changeLog 变化日志
          */
-        public void handleDirectoryChange(ChangeEvent event, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+        public ChangeProcessResult handleDirectoryChange(ChangeEvent event, KbFileWatchConfig config) {
             Path dirPath = Path.of(event.path());
             String dirName = pathHelper.getDirName(dirPath);
+            ChangeProcessResult result = new ChangeProcessResult();
 
             switch (event.type()) {
-                case CREATED -> handleDirectoryCreated(dirPath, dirName, config, changeLog);
-                case MODIFIED -> handleDirectoryModified(dirPath, dirName, config, changeLog);
-                case DELETED -> handleDirectoryDeleted(dirPath, config, changeLog);
-                case RENAMED -> handleDirectoryRenamed(dirPath, event.oldPath(), config, changeLog);
+                case CREATED -> result = handleDirectoryCreated(dirPath, dirName, config);
+                case MODIFIED -> result = handleDirectoryModified(dirPath, dirName, config);
+                case DELETED -> result = handleDirectoryDeleted(dirPath, config);
+                case RENAMED -> result = handleDirectoryRenamed(dirPath, event.oldPath(), config);
             }
+            return result;
         }
 
         /**
          * 处理目录创建
          */
-        private void handleDirectoryCreated(Path dirPath, String dirName, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+        private ChangeProcessResult handleDirectoryCreated(Path dirPath, String dirName, KbFileWatchConfig config) {
+            ChangeProcessResult result = new ChangeProcessResult();
             log.info("检测到新目录: {}", dirPath);
             try {
                 Long folderId = createOrUpdateFolder(dirPath, config);
-                changeLog.setFolderId(folderId);
+                result.setFolderId(folderId);
                 log.info("目录自动创建成功: {} -> folderId={}", dirPath, folderId);
             } catch (Exception e) {
                 log.error("目录自动创建失败: {}", dirPath, e);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.FAILED, "目录创建失败: " + e.getMessage());
+                result.setMessage("目录创建失败: " + e.getMessage());
             }
+            return result;
         }
 
         /**
          * 处理目录重命名
          * 更新目录本身及所有子目录、文件的路径信息
          *
+         * 重要：不触发子项事件，直接批量更新路径
+         *
          * @param newDirPath  新目录路径
          * @param oldDirPath  旧目录路径
          * @param config      监控配置
-         * @param changeLog   变化日志
          */
-        private void handleDirectoryRenamed(Path newDirPath, String oldDirPath, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+        private ChangeProcessResult handleDirectoryRenamed(Path newDirPath, String oldDirPath, KbFileWatchConfig config) {
+            ChangeProcessResult result = new ChangeProcessResult();
             String oldPathStr = pathHelper.normalizePath(Path.of(oldDirPath));
             String newPathStr = pathHelper.normalizePath(newDirPath);
+            String oldDirName = Path.of(oldPathStr).getFileName().toString();
             String newDirName = pathHelper.getDirName(newDirPath);
 
             log.info("处理目录重命名: {} -> {}", oldDirPath, newPathStr);
@@ -562,104 +618,100 @@ public class FileChangeHandlerService {
 
             if (existFolder == null) {
                 log.info("旧目录未在文档库中，忽略重命名事件: {}", oldDirPath);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.IGNORED, "旧目录不在文档库中");
-                return;
+                result.setMessage("旧目录不在文档库中");
+                return result;
             }
+
+            result.setFolderId(existFolder.getFolderId());
+
+            // 计算旧逻辑路径和新逻辑路径
+            String oldFolderPath = existFolder.getFolderPath();
+            String newFolderPath = oldFolderPath.replace(oldDirName, newDirName);
 
             // 在事务中批量更新路径信息
             transactionTemplate.executeWithoutResult(status -> {
                 // 1. 更新目录本身
-                updateFolderPath(existFolder, newDirName, oldPathStr, newPathStr);
-                changeLog.setFolderId(existFolder.getFolderId());
+                existFolder.setFolderName(newDirName);
+                existFolder.setFolderPath(newFolderPath);
+                folderMapper.updateById(existFolder);
+                log.debug("更新目录: folderId={}, newName={}, newPath={}", existFolder.getFolderId(), newDirName, newFolderPath);
 
-                // 2. 更新所有子目录的 folder_path
-                updateChildFoldersPath(existFolder.getFolderId(), oldPathStr, newPathStr);
+                // 2. 递归更新所有子目录的 folder_path 和 folderName（基于 parentId）
+                updateChildFoldersRecursively(existFolder.getFolderId(), oldFolderPath, newFolderPath);
 
-                // 3. 更新所有文件的 physical_path
-                updateChildFilesPath(existFolder.getFolderId(), oldPathStr, newPathStr);
+                // 3. 递归更新所有文件的 physical_path（基于 folderId -> docId -> fileId）
+                updateChildFilesRecursively(existFolder.getFolderId(), oldPathStr, newPathStr);
 
                 log.info("目录重命名处理完成: {} -> {}, 已更新子目录和文件路径", oldDirPath, newPathStr);
             });
+            return result;
         }
 
         /**
-         * 更新目录本身的路径信息
-         */
-        private void updateFolderPath(KbFolder folder, String newDirName, String oldPath, String newPath) {
-            folder.setFolderName(newDirName);
-            // folder_path 是逻辑路径（如 /父目录/当前目录），需要根据新物理路径计算
-            // 这里简化处理：替换 folder_path 中的旧目录名
-            if (folder.getFolderPath() != null) {
-                String oldFolderName = Path.of(oldPath).getFileName().toString();
-                String newFolderPath = folder.getFolderPath().replace(oldFolderName, newDirName);
-                folder.setFolderPath(newFolderPath);
-            }
-            folderMapper.updateById(folder);
-        }
-
-        /**
-         * 更新所有子目录的 folder_path（批量路径前缀替换）
+         * 递归更新所有子目录的 folder_path（基于 parentId 关系）
          *
-         * @param parentFolderId 父目录ID
-         * @param oldPathPrefix  旧路径前缀
-         * @param newPathPrefix  新路径前缀
+         * @param parentFolderId    父目录ID
+         * @param oldFolderPathPrefix 旧逻辑路径前缀
+         * @param newFolderPathPrefix 新逻辑路径前缀
          */
-        private void updateChildFoldersPath(Long parentFolderId, String oldPathPrefix, String newPathPrefix) {
-            // 查找所有子目录（folder_path 以旧路径开头）
-            LambdaQueryWrapper<KbFolder> query = Wrappers.lambdaQuery();
-            query.likeRight(KbFolder::getFolderPath, oldPathPrefix)
-                .ne(KbFolder::getFolderId, parentFolderId);
-            List<KbFolder> childFolders = folderMapper.selectList(query);
+        private void updateChildFoldersRecursively(Long parentFolderId, String oldFolderPathPrefix, String newFolderPathPrefix) {
+            // 查找直接子目录（通过 parentId）
+            List<KbFolder> childFolders = findChildFolders(parentFolderId);
 
             for (KbFolder child : childFolders) {
+                // 更新子目录的逻辑路径
                 if (child.getFolderPath() != null) {
-                    String newFolderPath = child.getFolderPath().replace(oldPathPrefix, newPathPrefix);
-                    child.setFolderPath(newFolderPath);
+                    String newChildPath = child.getFolderPath().replace(oldFolderPathPrefix, newFolderPathPrefix);
+                    child.setFolderPath(newChildPath);
                     folderMapper.updateById(child);
-                    log.debug("更新子目录路径: folderId={}, newPath={}", child.getFolderId(), newFolderPath);
+                    log.debug("更新子目录路径: folderId={}, newPath={}", child.getFolderId(), newChildPath);
                 }
+
+                // 递归处理子目录的子目录
+                updateChildFoldersRecursively(child.getFolderId(), oldFolderPathPrefix, newFolderPathPrefix);
             }
 
-            log.info("已更新 {} 个子目录的路径", childFolders.size());
+            log.info("已更新 {} 个直接子目录", childFolders.size());
         }
 
         /**
-         * 更新所有文件的 physical_path（批量路径前缀替换）
+         * 递归更新所有文件的 physical_path（基于 folderId -> docId -> fileId 关系）
          *
-         * @param parentFolderId 父目录ID
-         * @param oldPathPrefix  旧路径前缀
-         * @param newPathPrefix  新路径前缀
+         * @param folderId      目录ID
+         * @param oldPathPrefix 旧物理路径前缀
+         * @param newPathPrefix 新物理路径前缀
          */
-        private void updateChildFilesPath(Long parentFolderId, String oldPathPrefix, String newPathPrefix) {
-            // 查找该目录及其所有子目录下的文档
-            List<Long> allFolderIds = collectAllFolderIds(parentFolderId);
-
-            // 查找所有文件（physical_path 以旧路径开头）
-            LambdaQueryWrapper<KbFile> query = Wrappers.lambdaQuery();
-            query.likeRight(KbFile::getPhysicalPath, oldPathPrefix);
-            List<KbFile> childFiles = fileMapper.selectList(query);
+        private void updateChildFilesRecursively(Long folderId, String oldPathPrefix, String newPathPrefix) {
+            // 1. 更新当前目录下的所有文件
+            // 通过 folderId -> KbDoc -> fileId -> KbFile 查询
+            LambdaQueryWrapper<KbDoc> docQuery = Wrappers.lambdaQuery();
+            docQuery.eq(KbDoc::getFolderId, folderId);
+            List<KbDoc> docs = docMapper.selectList(docQuery);
 
             int updatedCount = 0;
-            for (KbFile file : childFiles) {
-                if (file.getPhysicalPath() != null) {
-                    String newPhysicalPath = file.getPhysicalPath().replace(oldPathPrefix, newPathPrefix);
-                    file.setPhysicalPath(newPhysicalPath);
-                    fileMapper.updateById(file);
-
-                    // 更新关联文档的名称（如果文件名变化）
-                    KbDoc doc = findDocByFileId(file.getFileId());
-                    if (doc != null) {
-                        String newFileName = Path.of(newPhysicalPath).getFileName().toString();
-                        doc.setDocName(newFileName);
-                        docMapper.updateById(doc);
+            for (KbDoc doc : docs) {
+                if (doc.getFileId() != null) {
+                    KbFile file = fileMapper.selectById(doc.getFileId());
+                    if (file != null && file.getPhysicalPath() != null) {
+                        // 替换物理路径前缀
+                        String newPhysicalPath = file.getPhysicalPath()
+                            .replace(oldPathPrefix + "\\", newPathPrefix + "\\")
+                            .replace(oldPathPrefix + "/", newPathPrefix + "/");
+                        file.setPhysicalPath(newPhysicalPath);
+                        fileMapper.updateById(file);
+                        updatedCount++;
+                        log.debug("更新文件路径: fileId={}, docId={}, newPath={}", file.getFileId(), doc.getDocId(), newPhysicalPath);
                     }
-
-                    updatedCount++;
-                    log.debug("更新文件路径: fileId={}, newPath={}", file.getFileId(), newPhysicalPath);
                 }
             }
 
-            log.info("已更新 {} 个文件的路径", updatedCount);
+            // 2. 递归处理子目录下的文件
+            List<KbFolder> childFolders = findChildFolders(folderId);
+            for (KbFolder child : childFolders) {
+                updateChildFilesRecursively(child.getFolderId(), oldPathPrefix, newPathPrefix);
+            }
+
+            log.info("目录 folderId={} 下已更新 {} 个文件的物理路径", folderId, updatedCount);
         }
 
         /**
@@ -680,24 +732,29 @@ public class FileChangeHandlerService {
         /**
          * 处理目录修改（子文件变化）
          */
-        private void handleDirectoryModified(Path dirPath, String dirName, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+        private ChangeProcessResult handleDirectoryModified(Path dirPath, String dirName, KbFileWatchConfig config) {
+            ChangeProcessResult result = new ChangeProcessResult();
             log.info("检测到目录修改（子文件变化）: {}", dirPath);
             try {
                 Long folderId = createOrUpdateFolder(dirPath, config);
-                changeLog.setFolderId(folderId);
-                updateFolderDocCount(folderId);
-                log.info("目录更新成功，重新计算文档数量: folderId={}", folderId);
+                result.setFolderId(folderId);
+                log.info("目录更新成功: folderId={}", folderId);
             } catch (Exception e) {
                 log.error("目录更新失败: {}", dirPath, e);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.FAILED, "目录更新失败: " + e.getMessage());
+                result.setMessage("目录更新失败: " + e.getMessage());
             }
+            return result;
         }
 
         /**
          * 处理目录删除
-         * 递归删除该目录及其所有子目录、子目录下的文档
+         * 重要：自动递归删除子目录和子文件（不触发子项事件）
+         *
+         * @param dirPath 目录路径
+         * @param config  监控配置
          */
-        private void handleDirectoryDeleted(Path dirPath, KbFileWatchConfig config, KbFileChangeLog changeLog) {
+        private ChangeProcessResult handleDirectoryDeleted(Path dirPath, KbFileWatchConfig config) {
+            ChangeProcessResult result = new ChangeProcessResult();
             log.info("检测到目录删除: {}", dirPath);
             try {
                 Long kbParentFolderId = pathHelper.getKbParentFolderId(config);
@@ -705,19 +762,20 @@ public class FileChangeHandlerService {
 
                 KbFolder existFolder = findFolderByRelativePath(relativePath, kbParentFolderId);
                 if (existFolder != null) {
+                    result.setFolderId(existFolder.getFolderId());
                     // 在事务中递归删除目录及其子目录、文档
                     transactionTemplate.executeWithoutResult(status -> {
                         deleteFolderRecursively(existFolder.getFolderId());
                     });
-                    changeLog.setFolderId(existFolder.getFolderId());
                     log.info("目录及子目录已删除: folderId={}, path={}", existFolder.getFolderId(), dirPath);
                 } else {
                     log.warn("未找到对应的目录记录: {}", dirPath);
                 }
             } catch (Exception e) {
                 log.error("目录删除失败: {}", dirPath, e);
-                changeLogHelper.updateStatus(changeLog, ChangeProcessStatusEnum.FAILED, "目录删除失败: " + e.getMessage());
+                result.setMessage("目录删除失败: " + e.getMessage());
             }
+            return result;
         }
 
         /**
@@ -789,7 +847,7 @@ public class FileChangeHandlerService {
          * @param config  监控配置
          * @return 目录ID
          */
-        private Long createOrUpdateFolder(Path dirPath, KbFileWatchConfig config) {
+        public Long createOrUpdateFolder(Path dirPath, KbFileWatchConfig config) {
             Long kbParentFolderId = pathHelper.getKbParentFolderId(config);
             Path relativePath = pathHelper.getRelativePath(dirPath, config.getWatchPath());
 
@@ -809,7 +867,6 @@ public class FileChangeHandlerService {
             String rootDirName = pathHelper.getDirName(dirPath);
             KbFolder existRoot = findFolderByNameAndParent(rootDirName, kbParentFolderId);
             if (existRoot != null) {
-                updateFolderDocCount(existRoot.getFolderId());
                 return existRoot.getFolderId();
             }
 
@@ -832,11 +889,6 @@ public class FileChangeHandlerService {
                     currentParentId = existFolder.getFolderId();
                 } else {
                     currentParentId = createFolderAtPath(folderName, currentParentId);
-                }
-
-                // 如果是最后一层，更新文档数量
-                if (i == nameCount - 1 && currentParentId != null) {
-                    updateFolderDocCount(currentParentId);
                 }
             }
 
@@ -905,7 +957,6 @@ public class FileChangeHandlerService {
             folderBo.setParentId(parentFolderId);
             folderBo.setStatus(1);
             folderBo.setSortOrder(0);
-            folderBo.setDocCount(0L);
 
             if (parentFolder != null) {
                 folderBo.setFolderLevel(parentFolder.getFolderLevel() + 1);
@@ -972,98 +1023,7 @@ public class FileChangeHandlerService {
             return null;
         }
 
-        /**
-         * 更新目录文档数量
-         */
-        private void updateFolderDocCount(Long folderId) {
-            if (folderId == null) {
-                return;
-            }
-
-            LambdaQueryWrapper<KbDoc> query = Wrappers.lambdaQuery();
-            query.eq(KbDoc::getFolderId, folderId);
-            Long count = docMapper.selectCount(query);
-
-            KbFolder folder = new KbFolder();
-            folder.setFolderId(folderId);
-            folder.setDocCount(count);
-            folderMapper.updateById(folder);
         }
-    }
-
-    // ========== 变化日志处理内部类 ==========
-
-    /**
-     * 变化日志助手
-     * 负责构建和更新变化日志记录
-     */
-    private class ChangeLogHelper {
-
-        /**
-         * 构建变化记录日志
-         *
-         * @param event  变化事件
-         * @param config 监控配置
-         * @return 变化日志实体
-         */
-        public KbFileChangeLog buildChangeLog(ChangeEvent event, KbFileWatchConfig config) {
-            KbFileChangeLog changeLog = new KbFileChangeLog();
-            changeLog.setConfigId(config.getConfigId());
-            changeLog.setFilePath(event.path());
-            changeLog.setFileName(Path.of(event.path()).getFileName().toString());
-            changeLog.setIsDirectory(event.isDirectory() ? 1 : 0);
-            changeLog.setChangeType(event.type().getCode());
-            changeLog.setFolderId(config.getFolderId());
-            changeLog.setProcessStatus(ChangeProcessStatusEnum.PENDING.getCode());
-            changeLog.setTenantId(config.getTenantId());
-            changeLog.setCreateTime(new Date());
-
-            // 重命名事件，记录旧路径到 processMsg
-            if (event.type() == FileChangeTypeEnum.RENAMED && event.oldPath() != null) {
-                changeLog.setProcessMsg("旧路径: " + event.oldPath());
-            }
-
-            // 如果文件存在，计算大小和hash
-            fillFileInfoIfExists(event, changeLog);
-
-            return changeLog;
-        }
-
-        /**
-         * 如果文件存在，填充文件信息
-         */
-        private void fillFileInfoIfExists(ChangeEvent event, KbFileChangeLog changeLog) {
-            if (event.isDirectory()) {
-                return;
-            }
-
-            Path path = Path.of(event.path());
-            if (!Files.exists(path)) {
-                return;
-            }
-
-            try {
-                changeLog.setFileSize(Files.size(path));
-                changeLog.setContentHash(DigestUtil.sha256Hex(Files.newInputStream(path)));
-            } catch (IOException e) {
-                log.warn("读取文件信息失败: {}", event.path(), e);
-            }
-        }
-
-        /**
-         * 更新变化记录处理状态
-         *
-         * @param changeLog 变化日志
-         * @param status    处理状态
-         * @param msg       处理消息
-         */
-        public void updateStatus(KbFileChangeLog changeLog, ChangeProcessStatusEnum status, String msg) {
-            changeLog.setProcessStatus(status.getCode());
-            changeLog.setProcessMsg(StrUtil.sub(msg, 0, 500));
-            changeLog.setProcessTime(new Date());
-            changeLogMapper.updateById(changeLog);
-        }
-    }
 
     // ========== 路径处理内部类 ==========
 

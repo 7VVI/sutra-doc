@@ -77,11 +77,6 @@ public class KbFolder extends TenantEntity {
     private String icon;
 
     /**
-     * 文档数量(含子目录)
-     */
-    private Long docCount;
-
-    /**
      * 状态: 1-启用, 0-禁用
      */
     private Integer status;

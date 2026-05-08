@@ -14,10 +14,14 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import java.util.zip.CRC32;
 
 /**
  * Hash计算引擎
- * 借鉴Git的设计，用size+mtime做快速预检，避免不必要的IO
+ * 采用多层检测策略，平衡速度和精度：
+ * 1. lastModified + size 快速预判（无需读取文件内容）
+ * 2. CRC32 快速校验（适合大文件场景）
+ * 3. SHA256 精确校验（用于去重、重命名检测）
  *
  * @author hmoob
  */
@@ -26,33 +30,122 @@ import java.util.stream.Collectors;
 public class HashEngine {
 
     /**
-     * stat缓存：path -> StatCache(cacheKey, hash)
+     * stat缓存：绝对路径 -> StatCache
+     * 缓存 lastModified + size + crc32 + sha256
      */
-    private final Map<String, StatCache> statCache = new ConcurrentHashMap<>();
-
-    private record StatCache(String key, String hash) {}
+    private final Map<String, FileFingerprintCache> fingerprintCache = new ConcurrentHashMap<>();
 
     /**
-     * 计算文件Hash（带stat缓存优化）
-     * 快速路径：size和mtime都没变，认为文件未变化（类似Git index的stat缓存）
+     * 文件指纹缓存记录
+     */
+    private record FileFingerprintCache(
+        long size,
+        long lastModified,
+        long crc32,      // CRC32 快速校验
+        String sha256    // SHA256 精确校验
+    ) {}
+
+    /**
+     * 计算文件 CRC32（快速校验）
+     * 适合大文件，计算速度比 SHA256 快很多
      *
      * @param path 文件路径
-     * @return SHA256 hash
+     * @return CRC32 值
      */
-    public String hashFile(Path path) throws IOException {
-        BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
+    public long calcCRC32(Path path) throws IOException {
+        CRC32 crc = new CRC32();
+        try (InputStream is = Files.newInputStream(path)) {
+            byte[] buf = new byte[65536]; // 64KB 缓冲区
+            int n;
+            while ((n = is.read(buf)) != -1) {
+                crc.update(buf, 0, n);
+            }
+        }
+        return crc.getValue();
+    }
 
-        // 快速路径：size 和 mtime 都没变，直接返回缓存的hash
-        String cacheKey = attrs.size() + "_" + attrs.lastModifiedTime().toMillis();
-        StatCache cached = statCache.get(path.toString());
-        if (cached != null && cached.key().equals(cacheKey)) {
-            return cached.hash();
+    /**
+     * 计算文件 SHA256（精确校验）
+     *
+     * @param path 文件路径
+     * @return SHA256 hash（十六进制字符串）
+     */
+    public String calcSHA256(Path path) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream is = Files.newInputStream(path)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = is.read(buf)) > 0) {
+                    digest.update(buf, 0, n);
+                }
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 algorithm not available", e);
+        }
+    }
+
+    /**
+     * 获取文件快速指纹（用于变化检测）
+     * 策略：lastModified + size + CRC32
+     *
+     * @param path 文件路径（绝对路径）
+     * @return 快速指纹字符串
+     */
+    public String getQuickFingerprint(Path path) throws IOException {
+        String absolutePath = path.toAbsolutePath().normalize().toString();
+        BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
+        long size = attrs.size();
+        long lastModified = attrs.lastModifiedTime().toMillis();
+
+        // 检查缓存是否可用（size 和 lastModified 未变）
+        FileFingerprintCache cached = fingerprintCache.get(absolutePath);
+        if (cached != null && cached.size() == size && cached.lastModified() == lastModified) {
+            // 使用缓存的 CRC32
+            return size + "_" + lastModified + "_" + cached.crc32();
         }
 
-        // 真正读取内容计算hash
-        String hash = computeSHA256(path);
-        statCache.put(path.toString(), new StatCache(cacheKey, hash));
-        return hash;
+        // 计算新的 CRC32
+        long crc32 = calcCRC32(path);
+
+        // 更新缓存（暂不计算 SHA256）
+        fingerprintCache.put(absolutePath, new FileFingerprintCache(size, lastModified, crc32, null));
+
+        return size + "_" + lastModified + "_" + crc32;
+    }
+
+    /**
+     * 获取文件精确指纹（用于去重、重命名检测）
+     * 策略：SHA256
+     *
+     * @param path 文件路径（绝对路径）
+     * @return SHA256 hash
+     */
+    public String getExactFingerprint(Path path) throws IOException {
+        String absolutePath = path.toAbsolutePath().normalize().toString();
+        BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
+        long size = attrs.size();
+        long lastModified = attrs.lastModifiedTime().toMillis();
+
+        // 检查缓存是否有 SHA256
+        FileFingerprintCache cached = fingerprintCache.get(absolutePath);
+        if (cached != null && cached.size() == size && cached.lastModified() == lastModified && cached.sha256() != null) {
+            return cached.sha256();
+        }
+
+        // 计算新的 SHA256
+        String sha256 = calcSHA256(path);
+
+        // 更新缓存
+        if (cached != null) {
+            fingerprintCache.put(absolutePath, new FileFingerprintCache(size, lastModified, cached.crc32(), sha256));
+        } else {
+            long crc32 = calcCRC32(path);
+            fingerprintCache.put(absolutePath, new FileFingerprintCache(size, lastModified, crc32, sha256));
+        }
+
+        return sha256;
     }
 
     /**
@@ -72,29 +165,13 @@ public class HashEngine {
      * 计算字符串SHA256
      */
     public String sha256String(String input) {
+        if (input == null || input.isEmpty()) {
+            return "";
+        }
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hashBytes = digest.digest(input.getBytes());
             return HexFormat.of().formatHex(hashBytes);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 algorithm not available", e);
-        }
-    }
-
-    /**
-     * 计算文件内容SHA256
-     */
-    private String computeSHA256(Path path) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream is = Files.newInputStream(path)) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = is.read(buf)) > 0) {
-                    digest.update(buf, 0, n);
-                }
-            }
-            return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("SHA-256 algorithm not available", e);
         }
@@ -106,20 +183,27 @@ public class HashEngine {
     private boolean isDirectChild(Path dir, String childPath) {
         Path child = Path.of(childPath);
         Path parent = child.getParent();
-        return parent != null && parent.equals(dir);
+        if (parent == null) {
+            return false;
+        }
+        String dirAbsPath = dir.toAbsolutePath().normalize().toString();
+        String parentAbsPath = parent.toAbsolutePath().normalize().toString();
+        return parentAbsPath.equals(dirAbsPath);
     }
 
     /**
-     * 清除指定路径的stat缓存
+     * 清除指定路径的缓存
      */
     public void invalidateCache(String path) {
-        statCache.remove(path);
+        fingerprintCache.remove(path);
     }
 
     /**
-     * 清除所有stat缓存
+     * 清除所有缓存
+     * 重要：每次快照扫描开始前调用
      */
     public void clearCache() {
-        statCache.clear();
+        fingerprintCache.clear();
+        log.debug("文件指纹缓存已清除");
     }
 }

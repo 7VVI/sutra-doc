@@ -179,9 +179,6 @@ public class KbFolderServiceImpl implements IKbFolderService {
         if (folder.getSortOrder() == null) {
             folder.setSortOrder(0);
         }
-        if (folder.getDocCount() == null) {
-            folder.setDocCount(0L);
-        }
         // 设置层级和路径
         if (bo.getParentId() != null && bo.getParentId() > 0) {
             KbFolder parentFolder = baseMapper.selectById(bo.getParentId());

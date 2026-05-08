@@ -85,12 +85,6 @@ public class KbFolderVo implements Serializable {
     private String icon;
 
     /**
-     * 文档数量(含子目录)
-     */
-    @ExcelProperty(value = "文档数量")
-    private Long docCount;
-
-    /**
      * 状态: 1-启用, 0-禁用
      */
     @ExcelProperty(value = "状态")
