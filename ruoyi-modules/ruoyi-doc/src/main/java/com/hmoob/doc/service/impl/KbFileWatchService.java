@@ -54,6 +54,7 @@ public class KbFileWatchService {
     private final KbFileChangeLogMapper changeLogMapper;
     private final SnapshotEngine snapshotEngine;
     private final FileChangeHandlerService changeHandlerService;
+    private final SnapshotPersistence snapshotPersistence;
 
     /**
      * 各监控配置对应的当前快照
@@ -87,10 +88,16 @@ public class KbFileWatchService {
     }
 
     /**
-     * 应用关闭前停止监控
+     * 应用关闭前停止监控并保存快照
      */
     @PreDestroy
     public void destroy() {
+        // 保存所有快照（便于下次启动快速加载）
+        snapshotMap.forEach((configId, snapshot) -> {
+            snapshotPersistence.save(snapshot, configId);
+        });
+        log.info("快照已保存，共 {} 个", snapshotMap.size());
+
         stopAllWatchers();
     }
 
@@ -150,11 +157,25 @@ public class KbFileWatchService {
             ? config.getExcludePattern()
             : watchProperties.getDefaultExcludePattern();
 
-        // 1. 建立初始快照基线
-        log.info("建立快照基线: {} (recursive={})", watchPath, recursive);
-        FileSnapshot baseline = snapshotEngine.takeSnapshot(watchPath, recursive, excludePattern);
+        // 1. 尝试加载持久化快照，如果没有则新建基线
+        FileSnapshot baseline = snapshotPersistence.load(config.getConfigId());
+        if (baseline != null) {
+            log.info("加载持久化快照: configId={}, nodes={}, timestamp={}", config.getConfigId(), baseline.size(), baseline.getTimestamp());
+
+            // 检查快照是否过期（超过24小时需要重新扫描）
+            long snapshotAge = System.currentTimeMillis() - baseline.getTimestamp();
+            long maxAge = 24 * 60 * 60 * 1000L; // 24小时
+            if (snapshotAge > maxAge) {
+                log.info("快照已过期（{}小时），重新扫描建立基线", snapshotAge / (60 * 60 * 1000));
+                baseline = snapshotEngine.takeSnapshot(watchPath, recursive, excludePattern);
+            }
+        } else {
+            log.info("建立快照基线: {} (recursive={})", watchPath, recursive);
+            baseline = snapshotEngine.takeSnapshot(watchPath, recursive, excludePattern);
+        }
+
         snapshotMap.put(config.getConfigId(), baseline);
-        log.info("快照基线建立完成: {} 个文件/目录", baseline.size());
+        log.info("快照基线就绪: {} 个文件/目录", baseline.size());
 
         // 2. 创建单线程事件处理器（确保顺序处理）
         ExecutorService eventExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -210,6 +231,9 @@ public class KbFileWatchService {
 
         // 更新快照
         snapshotMap.put(config.getConfigId(), newSnapshot);
+
+        // 持久化新快照（便于下次启动快速加载）
+        snapshotPersistence.save(newSnapshot, config.getConfigId());
 
         // 处理变化事件（按顺序提交到单线程执行器）
         if (!changes.isEmpty()) {
