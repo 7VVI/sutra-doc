@@ -219,12 +219,22 @@ public class FileChangeHandlerService {
             // 根据文件路径查找或创建对应的目录
             Long folderId = findOrCreateFolderForFile(filePath, config);
 
+            // 获取目录的部门ID，确保文件部门与目录一致
+            final Long finalDeptId;
+            if (folderId != null && folderId > 0) {
+                KbFolder folder = folderMapper.selectById(folderId);
+                finalDeptId = folder != null ? folder.getDeptId() : null;
+            } else {
+                finalDeptId = null;
+            }
+
             // 在事务中创建文件和文档记录
+            final Long finalFolderId = folderId;
             Long docId = transactionTemplate.execute(status -> {
-                return createFileAndDoc(filePath, config, sha256, fileName, fileType, folderId);
+                return createFileAndDoc(filePath, config, sha256, fileName, fileType, finalFolderId, finalDeptId);
             });
             result.setDocId(docId);
-            result.setFolderId(folderId);
+            result.setFolderId(finalFolderId);
             return result;
         }
 
@@ -399,16 +409,17 @@ public class FileChangeHandlerService {
         /**
          * 创建文件和文档记录
          * @param folderId 目录ID（根据文件路径查找的实际目录）
+         * @param deptId   部门ID（与目录部门保持一致）
          * @return 文档ID
          */
-        private Long createFileAndDoc(Path filePath, KbFileWatchConfig config, String sha256, String fileName, String fileType, Long folderId) {
+        private Long createFileAndDoc(Path filePath, KbFileWatchConfig config, String sha256, String fileName, String fileType, Long folderId, Long deptId) {
             try {
                 // 保存文件记录
                 KbFile kbFile = buildKbFile(filePath, sha256, fileName, fileType);
                 fileMapper.insert(kbFile);
 
-                // 创建文档记录（使用实际的目录ID）
-                KbDoc doc = buildKbDoc(kbFile, folderId, fileName, fileType);
+                // 创建文档记录（使用实际的目录ID和部门ID）
+                KbDoc doc = buildKbDoc(kbFile, folderId, deptId, fileName, fileType);
                 docMapper.insert(doc);
 
                 // 异步解析并索引到ES
@@ -416,7 +427,7 @@ public class FileChangeHandlerService {
                     safeAsyncProcessDoc(doc.getDocId());
                 }
 
-                log.info("文件自动添加到文档库成功: {} -> docId={}, folderId={}", fileName, doc.getDocId(), folderId);
+                log.info("文件自动添加到文档库成功: {} -> docId={}, folderId={}, deptId={}", fileName, doc.getDocId(), folderId, deptId);
                 return doc.getDocId();
             } catch (IOException e) {
                 throw new RuntimeException("创建文件记录失败: " + fileName, e);
@@ -442,10 +453,12 @@ public class FileChangeHandlerService {
         /**
          * 构建文档实体
          * @param folderId 目录ID（根据文件路径计算的实际目录）
+         * @param deptId   部门ID（与目录部门保持一致）
          */
-        private KbDoc buildKbDoc(KbFile kbFile, Long folderId, String fileName, String fileType) {
+        private KbDoc buildKbDoc(KbFile kbFile, Long folderId, Long deptId, String fileName, String fileType) {
             KbDoc doc = new KbDoc();
             doc.setFolderId(folderId != null ? folderId : 0L);
+            doc.setDepId(deptId); // 部门ID与目录保持一致
             doc.setFileId(kbFile.getFileId());
             doc.setDocName(fileName);
             doc.setDocTitle(FileUtil.extractFileTitle(fileName));
