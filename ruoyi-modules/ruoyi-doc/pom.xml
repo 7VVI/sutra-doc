@@ -13,6 +13,24 @@
     <description>KB知识库管理模块</description>
 
     <dependencies>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-spring-boot-starter</artifactId>
+            <version>1.11.7-beta19</version>
+        </dependency>
+
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
+            <version>1.11.7-beta19</version>
+        </dependency>
+
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-reactor</artifactId>
+            <version>1.11.7-beta19</version>
+        </dependency>
+
         <!-- Spring AI Alibaba - Document Parser (TikaDocumentParser) -->
         <dependency>
             <groupId>com.alibaba.cloud.ai</groupId>
