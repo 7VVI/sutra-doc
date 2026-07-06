@@ -133,11 +133,11 @@ RuoYi-Vue-Plus/
 
 |  |  |
 |---|---|
-| ![主页](images/main_page.png "主页") | ![论道台](images/topic_page.png "论道台") |
-| ![视频页面](images/video_page.png "视频页面") | ![AI智能助手](images/ai_agent.png "AI智能助手") |
-| ![藏经阁](images/folder.png "藏经阁") | ![文档中心](images/doc_center.png "文档中心") |
-| ![文档日志](images/doc_log.png "文档日志") | ![文档关注](images/doc_watch.png "文档关注") |
-| ![视频管理](images/video.png "视频管理") | ![视频播放](images/paly_video.png "视频播放") |
+| ![主页](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobmain_page.png "主页") | ![论道台](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobtopic_page.png "论道台") |
+| ![视频页面](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobvideo_page.png "视频页面") | ![AI智能助手](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobai_agent.png "AI智能助手") |
+| ![藏经阁](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobfolder.png "藏经阁") | ![文档中心](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobdoc_center.png "文档中心") |
+| ![文档日志](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobdoc_log.png "文档日志") | ![文档关注](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobdoc_watch.png "文档关注") |
+| ![视频管理](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobvideo.png "视频管理") | ![视频播放](https://picgo-liziyuan.oss-cn-hangzhou.aliyuncs.com/hmoobpaly_video.png "视频播放") |
 
 ---
 
