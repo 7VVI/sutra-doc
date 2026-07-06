@@ -289,3 +289,11 @@ justauth:
       client-id: 10**********6
       client-secret: 1f7d08**********5b7**********29e
       redirect-uri: ${justauth.address}/social-callback?source=gitea
+langchain4j:
+  open-ai:
+    streaming-chat-model:
+      api-key: ${AI_DASHSCOPE_API_KEY:xxx}
+      base-url: 'https://coding.dashscope.aliyuncs.com/v1'
+      max-retries: 3
+      model-name: qwen3.6-plus
+      strict-tools: true
